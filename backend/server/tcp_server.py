@@ -14,8 +14,7 @@ from protocol.packet import (
 )
 from config.settings import (
     SERVER_IP, SERVER_PORT, BUFFER_SIZE, GDRIVE_PATH,
-    CLIENT_TIMEOUT_SEC, DEFAULT_SLEEP_MIN, DEFAULT_IDLE_MIN,
-    DEFAULT_MAX_ACQ, DEFAULT_COOLDOWN_SEC
+    CLIENT_TIMEOUT_SEC,
 )
 from app_state import AppState, ConnectionEntry
 
@@ -79,11 +78,10 @@ def handle_client(conn, addr, state: AppState):
                     s.append(battery_mv)
 
                 with state.lock:
-                    cfg = state.config
-                response = pack_server_config(
-                    cfg.sleep_min, cfg.idle_min,
-                    cfg.max_acq,   cfg.cooldown_sec
-                )
+                    response = pack_server_config(
+                        state.config.sleep_min, state.config.idle_min,
+                        state.config.max_acq,   state.config.cooldown_sec
+                    )
                 conn.sendall(response)
                 logging.info(f"Config sent to {addr[0]}")
 

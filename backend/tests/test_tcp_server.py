@@ -1,10 +1,11 @@
+import socket
 import struct
 import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from app_state import AppState, DeviceConfig
+from app_state import AppState
 from protocol.packet import (
     HEADER_SIZE_BYTES, SAMPLE_SIZE_BYTES, BATTERY_SIZE_BYTES,
 )
@@ -62,7 +63,6 @@ def test_handle_client_logs_connection_to_state():
 
 def test_handle_client_does_not_log_on_timeout():
     """A socket timeout produces no ConnectionEntry."""
-    import socket
     state = AppState()
 
     conn = MagicMock()
