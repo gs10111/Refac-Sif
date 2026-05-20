@@ -17,6 +17,7 @@ from config.settings import (
     CLIENT_TIMEOUT_SEC, DEFAULT_SLEEP_MIN, DEFAULT_IDLE_MIN,
     DEFAULT_MAX_ACQ, DEFAULT_COOLDOWN_SEC
 )
+from app_state import AppState, ConnectionEntry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -46,7 +47,7 @@ def save_data():
             data_queue.task_done()
 
 
-def handle_client(conn, addr):
+def handle_client(conn, addr, state: AppState):
     logging.info(f"Connected: {addr[0]}:{addr[1]}")
     conn.settimeout(CLIENT_TIMEOUT_SEC)
     buf     = b''
@@ -69,23 +70,30 @@ def handle_client(conn, addr):
                 buf = buf[SAMPLE_SIZE_BYTES:]
 
             if received >= expected:
-                # Read battery voltage
                 while len(buf) < BATTERY_SIZE_BYTES:
                     buf += conn.recv(BATTERY_SIZE_BYTES - len(buf))
                 battery_mv = int.from_bytes(buf[:BATTERY_SIZE_BYTES], byteorder='little')
                 buf = buf[BATTERY_SIZE_BYTES:]
 
-                # Append battery to every sample
                 for s in samples:
                     s.append(battery_mv)
 
-                # Send config response
+                with state.lock:
+                    cfg = state.config
                 response = pack_server_config(
-                    DEFAULT_SLEEP_MIN, DEFAULT_IDLE_MIN,
-                    DEFAULT_MAX_ACQ,   DEFAULT_COOLDOWN_SEC
+                    cfg.sleep_min, cfg.idle_min,
+                    cfg.max_acq,   cfg.cooldown_sec
                 )
                 conn.sendall(response)
                 logging.info(f"Config sent to {addr[0]}")
+
+                with state.lock:
+                    state.connections.append(ConnectionEntry(
+                        ip=addr[0],
+                        timestamp=datetime.datetime.now(),
+                        n_samples=len(samples),
+                        battery_mv=battery_mv,
+                    ))
                 break
 
     except socket.timeout:
@@ -98,7 +106,7 @@ def handle_client(conn, addr):
             data_queue.put((addr[0], datetime.datetime.now(), samples))
 
 
-def server_main():
+def server_main(state: AppState):
     global running
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.bind((SERVER_IP, SERVER_PORT))
@@ -110,7 +118,7 @@ def server_main():
         while running:
             try:
                 conn, addr = srv.accept()
-                executor.submit(handle_client, conn, addr)
+                executor.submit(handle_client, conn, addr, state)
             except socket.timeout:
                 continue
             except Exception as e:
@@ -130,8 +138,12 @@ def exit_monitor():
 
 
 if __name__ == '__main__':
+    from web.server import web_server_main
+
+    state = AppState()
     threads = [
-        threading.Thread(target=server_main),
+        threading.Thread(target=server_main,     args=(state,)),
+        threading.Thread(target=web_server_main, args=(state,)),
         threading.Thread(target=exit_monitor),
         threading.Thread(target=save_data),
     ]
