@@ -73,14 +73,28 @@ def test_post_config_rejects_zero(client):
     assert state.config.sleep_min == original
 
 
+def test_post_config_rejects_negative(client):
+    c, state = client
+    original = state.config.sleep_min
+    response = c.post('/config', data={
+        'sleep_min':    '-5',
+        'idle_min':     '10',
+        'max_acq':      '3',
+        'cooldown_sec': '2',
+    })
+    assert response.status_code == 400
+    assert state.config.sleep_min == original
+
+
 def test_get_index_shows_connection_history(client):
     c, state = client
-    state.connections.append(ConnectionEntry(
-        ip='192.168.1.5',
-        timestamp=datetime.datetime(2026, 5, 20, 14, 0, 0),
-        n_samples=100,
-        battery_mv=3750,
-    ))
+    with state.lock:
+        state.connections.append(ConnectionEntry(
+            ip='192.168.1.5',
+            timestamp=datetime.datetime(2026, 5, 20, 14, 0, 0),
+            n_samples=100,
+            battery_mv=3750,
+        ))
     response = c.get('/')
     body = response.data.decode()
     assert '192.168.1.5' in body
