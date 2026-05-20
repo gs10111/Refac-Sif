@@ -1,3 +1,4 @@
+import dataclasses
 from flask import Flask, render_template, request, redirect
 
 from app_state import AppState
@@ -9,7 +10,7 @@ def create_app(state: AppState) -> Flask:
     @app.route('/')
     def index():
         with state.lock:
-            config = state.config
+            config = dataclasses.replace(state.config)
             connections = list(state.connections)
         return render_template('index.html', config=config, connections=connections)
 

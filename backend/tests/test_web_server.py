@@ -84,5 +84,5 @@ def test_get_index_shows_connection_history(client):
     response = c.get('/')
     body = response.data.decode()
     assert '192.168.1.5' in body
-    assert '100' in body
-    assert '3750' in body
+    assert '<td>100</td>' in body
+    assert '<td>3750</td>' in body
