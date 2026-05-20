@@ -33,7 +33,7 @@ def create_app(state: AppState) -> Flask:
             state.config.max_acq      = max_acq
             state.config.cooldown_sec = cooldown_sec
 
-        return redirect('/')
+        return redirect('/', 303)
 
     return app
 

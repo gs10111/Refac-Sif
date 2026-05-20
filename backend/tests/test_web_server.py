@@ -40,7 +40,7 @@ def test_post_config_updates_state(client):
         'max_acq':      '3',
         'cooldown_sec': '2',
     })
-    assert response.status_code in (301, 302)
+    assert response.status_code == 303
     assert state.config.sleep_min    == 120
     assert state.config.idle_min     == 10
     assert state.config.max_acq      == 3
