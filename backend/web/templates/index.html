@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>ESP32 Config Server</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1a1a2e; color: #e0e0e0;
+      font-family: monospace; padding: 24px;
+      min-height: 100vh;
+    }
+    h1 { color: #7ecfff; margin-bottom: 24px; font-size: 1.1rem; letter-spacing: 1px; }
+    .layout { display: flex; gap: 24px; align-items: flex-start; }
+    .panel-config  { flex: 1; }
+    .panel-history { flex: 2; }
+    h2 {
+      color: #7ecfff; font-size: 0.75rem; text-transform: uppercase;
+      letter-spacing: 2px; margin-bottom: 14px;
+    }
+    .field {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #0f3460; padding: 10px 14px; border-radius: 4px;
+      margin-bottom: 8px;
+    }
+    .field label { color: #aaa; font-size: 0.85rem; }
+    .field input {
+      width: 72px; background: #1a1a2e; border: 1px solid #7ecfff;
+      color: #7ecfff; text-align: center; padding: 5px;
+      border-radius: 3px; font-size: 0.95rem; font-family: monospace;
+    }
+    button {
+      width: 100%; margin-top: 14px; background: #e94560; color: white;
+      border: none; padding: 10px; border-radius: 4px; cursor: pointer;
+      font-size: 0.85rem; font-family: monospace; letter-spacing: 2px;
+    }
+    button:hover { background: #c73652; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    th {
+      color: #aaa; text-align: left; padding: 7px 10px;
+      border-bottom: 1px solid #0f3460; font-weight: normal;
+    }
+    td { padding: 7px 10px; border-bottom: 1px solid #111830; }
+    tr:hover td { background: #0f3460; }
+    .empty { color: #444; font-style: italic; padding: 14px 10px; }
+  </style>
+</head>
+<body>
+  <h1>ESP32 CONFIG SERVER</h1>
+  <div class="layout">
+
+    <div class="panel-config">
+      <h2>Configuracao</h2>
+      <form method="POST" action="/config">
+        <div class="field">
+          <label>Sleep (min)</label>
+          <input type="number" name="sleep_min" value="{{ config.sleep_min }}" min="1" required>
+        </div>
+        <div class="field">
+          <label>Idle (min)</label>
+          <input type="number" name="idle_min" value="{{ config.idle_min }}" min="1" required>
+        </div>
+        <div class="field">
+          <label>Max Acq</label>
+          <input type="number" name="max_acq" value="{{ config.max_acq }}" min="1" required>
+        </div>
+        <div class="field">
+          <label>Cooldown (s)</label>
+          <input type="number" name="cooldown_sec" value="{{ config.cooldown_sec }}" min="1" required>
+        </div>
+        <button type="submit">SALVAR</button>
+      </form>
+    </div>
+
+    <div class="panel-history">
+      <h2>Ultimas Conexoes</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>IP</th>
+            <th>Horario</th>
+            <th>Amostras</th>
+            <th>Bateria (mV)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if connections %}
+            {% for entry in connections | reverse %}
+            <tr>
+              <td>{{ entry.ip }}</td>
+              <td>{{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+              <td>{{ entry.n_samples }}</td>
+              <td>{{ entry.battery_mv }}</td>
+            </tr>
+            {% endfor %}
+          {% else %}
+            <tr><td colspan="4" class="empty">Nenhuma conexao registrada ainda.</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+</body>
+</html>
