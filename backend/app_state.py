@@ -26,7 +26,11 @@ class ConnectionEntry:
 
 
 class AppState:
-    def __init__(self):
+    """Shared in-memory state between Flask web server and TCP server threads.
+    All mutations to config and connections must be protected by lock.
+    """
+
+    def __init__(self) -> None:
         self.config:      DeviceConfig          = DeviceConfig()
         self.connections: deque[ConnectionEntry] = deque(maxlen=50)
         self.lock:        threading.Lock         = threading.Lock()

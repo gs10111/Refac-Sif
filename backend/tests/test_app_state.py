@@ -45,12 +45,13 @@ def test_connections_append_and_order():
 def test_connections_max_50():
     state = AppState()
     for i in range(60):
-        state.connections.append(ConnectionEntry(
-            ip=f'10.0.0.{i}',
-            timestamp=datetime.datetime.now(),
-            n_samples=i,
-            battery_mv=3800,
-        ))
+        with state.lock:
+            state.connections.append(ConnectionEntry(
+                ip=f'10.0.0.{i}',
+                timestamp=datetime.datetime.now(),
+                n_samples=i,
+                battery_mv=3800,
+            ))
     assert len(state.connections) == 50
 
 
