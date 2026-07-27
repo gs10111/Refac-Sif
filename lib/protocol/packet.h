@@ -8,6 +8,8 @@
 #define HEADER_SIZE_BYTES     4   // uint32_t total_bytes sent before data
 #define BATTERY_SIZE_BYTES    2   // uint16_t sent after all samples
 
+#define FRAME_TIMESTAMP_BYTES 4   // leading uint32_t of every sample frame
+
 // Per-sample layout — 18 bytes, little-endian
 // [0-3]   timestamp_ms  uint32_t
 // [4-5]   accel_x       int16_t

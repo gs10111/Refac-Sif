@@ -3,12 +3,7 @@
 #include "Arduino.h"
 #include "SPI.h"
 
-enum IIMStatus : uint8_t
-{
-    IIM_FAULT = 0,
-    IIM_OK,
-    IIM_NOT_READY
-};
+#include "imu.h"
 
 enum AccelRange : uint8_t
 {
@@ -43,24 +38,29 @@ enum Axis : uint8_t
     Y_AXIS,
     Z_AXIS
 };
-class ICM42688P
+// The concrete driver behind IImu. It no longer owns storage: it fills the 14
+// sensor bytes of a frame and returns. The ring buffer and the 4-byte timestamp
+// belong to AcquisitionService, which is where they can be tested on a host.
+class ICM42688P : public IImu
 {
 public:
-    ICM42688P(SPIClass &spi, int8_t cs_pin);
+    ICM42688P(SPIClass &spi, int8_t cs_pin, AccelRange range, OdrFreq odr);
 
     bool begin(int8_t sck, int8_t miso, int8_t mosi);
-    void wakeup(AccelRange range, OdrFreq odr);
-    void sleep();
-    IIMStatus sampleOnceMEMS3Dbyte(uint8_t *buf, uint32_t bufferSize);
-    int16_t readTemperature();
-    void reset();
 
-    uint32_t head = 0;
-    uint32_t tail = 0;
+    // IImu
+    void wake() override;
+    void sleep() override;
+    ImuStatus readSensorFrame(uint8_t *out) override;
+
+    void wakeup(AccelRange range, OdrFreq odr);
+    int16_t readTemperature();
 
 private:
     SPIClass *_spi;
     int8_t _cs_pin;
+    AccelRange _range;
+    OdrFreq _odr;
 
     void spi_write(uint8_t reg, const uint8_t *data, uint32_t len);
     void spi_read(uint8_t reg, uint8_t *data, uint32_t len);

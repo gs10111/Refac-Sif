@@ -26,7 +26,8 @@ TriggerEvent BeltTrigger::poll(TriggerLevel raw, uint32_t nowMs)
 {
 #ifdef MUTANT_COOLDOWN_SAMPLES_THROUGH
     // ==== MUTATION: MUTANT_COOLDOWN_SAMPLES_THROUGH ====
-    // Built only by [env:native_mutant]. Never by env:native or env:pico32.
+    // Built only by [env:mutant_cooldown_samples_through].
+    // Never by env:native or env:pico32.
     //
     // BREAKS: the cooldown blocks. This version keeps tracking the pin level while
     //         the window runs and merely suppresses the event, so it reaches the
@@ -38,7 +39,7 @@ TriggerEvent BeltTrigger::poll(TriggerLevel raw, uint32_t nowMs)
     //         LOW inside it. If a change to this class leaves all three green with
     //         this flag on, the change removed the protection, not the bug.
     //
-    // Run it:  pio test -e native_mutant
+    // Run it:  pio test -e mutant_cooldown_samples_through
     const bool blocked = ((int32_t)(nowMs - _openAtMs) < 0);
 
     if (raw == _lastLevel)

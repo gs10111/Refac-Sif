@@ -182,9 +182,32 @@ static void test_server_update_flag_routes_to_restart(void)
     TEST_ASSERT_EQUAL_UINT8(BELT_STAGE_ARM_TRIGGER, step.next);
 }
 
+// T31d — max_acq of 0 ends the cycle immediately, having collected nothing.
+//
+// CHARACTERISATION TEST: this already passes. It is here because the behaviour was
+// emergent from `0 >= 0` rather than specified, and it happens to match production
+// by coincidence of a different mechanism — production pre-increments to 1 on entry
+// and breaks on `loopCounter > nSamples`, so 1 > 0 fires on the first iteration and
+// the device sleeps having collected essentially nothing. Same observable outcome,
+// so DEC-0 settles it: no clamp, no reinterpreting 0 as unlimited in the firmware.
+// The web form refuses 0, which is where an operator should be stopped from
+// disabling a device for four hours at a time.
+static void test_max_acquisitions_of_zero_ends_the_cycle_immediately(void)
+{
+    BeltInputs in = fresh_inputs();
+    in.maxAcquisitions = 0;
+    in.acquisitionsDone = 0;
+
+    BeltStep step = belt_next(BELT_STAGE_CYCLE, in);
+
+    TEST_ASSERT_EQUAL_UINT8(BELT_ACTION_SLEEP_TIMER, step.action);
+    TEST_ASSERT_EQUAL_UINT8(BELT_STAGE_ARM_TRIGGER, step.next);
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_max_acquisitions_of_zero_ends_the_cycle_immediately);
     RUN_TEST(test_cold_boot_arms_trigger_and_sleeps);
     RUN_TEST(test_trigger_wake_enters_cycle);
     RUN_TEST(test_cycle_stays_in_cycle_after_transmit_when_acquisitions_remain);
