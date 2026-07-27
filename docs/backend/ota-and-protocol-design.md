@@ -712,6 +712,14 @@ Mesmo remédio da **L6** e do `A27b` no firmware, pelo mesmo motivo — teste cu
 
 **Quando anotar:** em proporção a **quantos** testes emprestam a metade positiva. Um único emprestador é frágil — uma faxina o apaga. Uma dúzia não é: a faxina que remove os doze não é faxina. Anotei os quatro casos com emprestador **único e nomeável**; deixei sem anotação os que tomam emprestado de muitos, e os autocontidos, onde as duas metades estão no mesmo teste e ler o teste basta.
 
+**Guarde a pergunta, não o artefato.** "Emprestado de muitos" é seguro **hoje**, e a contagem de emprestadores não é trabalho de ninguém: doze viram três, viram um, ao longo de edições comuns, e nada anuncia a travessia. Por isso o que fica registrado é o **comando que classifica**, não a classificação — a lista de 34 envelhece, a pergunta não:
+
+```bash
+cd backend && grep -rn "== \[\]\|not in body\|call_count == 0\|not any(\|== 0$" tests/*.py
+```
+
+Cada acerto é uma asserção de vazio-passa. Para cada uma, a pergunta é onde mora a metade positiva: no mesmo teste (autocontida), em muitos (segura por ora), ou num único teste nomeável (anote).
+
 ### 8.2 Contagens falham pior que vazios
 
 O caso vazio-passa é ruim; **igualdade entre contagens é pior**:
