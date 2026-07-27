@@ -6,6 +6,8 @@ from scipy.signal import detrend
 from scipy import integrate
 from scipy import signal
 
+from timeline import find_time_gaps
+
 PATH_DIR = "C:/Users/romeu/OneDrive/Área de Trabalho/Trabalho/SIF-DI241794-SISTEMA-INERCIAL-COM-HADRWARE-FLEX-VEL/192.168.1.110_20250612_164958.csv"
 try:
     df = pd.read_csv(PATH_DIR)
@@ -103,7 +105,22 @@ def process_temperature_data(temp_values):
     return temp_df
 
 
-# Processamento dos Dados 
+# Continuidade da base de tempo. Um CSV pode conter DUAS aquisições separadas por um
+# idle timeout — o device mantém o ring entre elas e nada no arquivo marca a emenda.
+# Tudo abaixo é integrado numa grade uniforme de DT segundos, então um buraco de
+# minutos entra na conta como se fossem 20 ms.
+gaps = find_time_gaps(df['timestamp'])
+if gaps:
+    intervalo_tipico = int(np.median(np.diff(df['timestamp'])))
+    print(f"\nAVISO: descontinuidade na base de tempo — {len(gaps)} lacuna(s).")
+    for indice, salto in gaps:
+        print(f"  amostra {indice}: salto de {salto} ms "
+              f"(intervalo tipico: {intervalo_tipico} ms)")
+    print(f"  Velocidade e angulo sao integrados numa grade uniforme de DT={DT} s, "
+          "entao tudo derivado a partir destes pontos esta corrompido.")
+    print("  O processamento continua.\n")
+
+# Processamento dos Dados
 df_acc_x, df_speed_x, df_gyro_x, df_degree_x = process_sensor_data(df['x_data'], df['x_gyro'])
 df_acc_y, df_speed_y, df_gyro_y, df_degree_y = process_sensor_data(df['y_data'], df['y_gyro'])
 df_acc_z, df_speed_z, df_gyro_z, df_degree_z = process_sensor_data(df['z_data'], df['z_gyro'])
