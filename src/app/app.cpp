@@ -26,9 +26,9 @@ void App::begin()
     pinMode(IMU_INT1_PIN, INPUT);
     pinMode(IMU_INT2_PIN, INPUT);
     _wifi.configure(DEVICE_IP, NETWORK_GW, NETWORK_SUBNET);
-    _sampleBuf = (uint8_t *)ps_malloc(ACQUISITION_BUFFER_SAMPLES * SAMPLE_SIZE_BYTES);
+    _sampleBuf = (uint8_t *)ps_malloc(ACQUISITION_BUFFER_BYTES);
     _imu.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN);
-    _acq = new AcquisitionService(_imu, _sampleBuf, ACQUISITION_BUFFER_SAMPLES * SAMPLE_SIZE_BYTES);
+    _acq = new AcquisitionService(_imu, _sampleBuf, ACQUISITION_BUFFER_BYTES);
     _acq->setConfig(serverConfig);
     setCpuFrequencyMhz(10);
 }
