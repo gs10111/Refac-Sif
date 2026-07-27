@@ -9,7 +9,7 @@
 #include "belt_trigger.h"
 #include "ring_buffer.h"
 #include "../services/esp32_platform.h"
-#include "../services/power_manager.h"
+#include "power_manager.h"
 #include "../services/connectivity/wifi_manager.h"
 #include "../services/connectivity/tcp_client.h"
 
@@ -28,8 +28,12 @@ private:
     RingBuffer         *_ring      = nullptr;
     AcquisitionService *_acq       = nullptr;
     BeltTrigger         _trigger;
-    PowerManager        _power;
     WiFiManager         _wifi;
+    EspCpu              _cpu;
+    EspSleeper          _sleeper;
+    // Declared after its collaborators: member initialisation follows declaration
+    // order, and these references must be bound to live objects.
+    PowerManager        _power{_imu, _wifi, _cpu, _sleeper};
     TcpClient           _tcp;
 
     // Plain RAM, and that is correct: they describe the cycle currently in

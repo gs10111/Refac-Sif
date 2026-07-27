@@ -22,7 +22,7 @@ bool WiFiManager::connect(const char *ssid, const char *password, uint32_t timeo
     return true;
 }
 
-void WiFiManager::disconnect()
+void WiFiManager::off()
 {
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);

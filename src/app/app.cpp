@@ -44,7 +44,9 @@ void App::begin()
     // ext0 wake from ending the first acquisition on its first poll.
     _trigger.begin(millis(), serverConfig.trigger_cooldown_sec);
 
-    setCpuFrequencyMhz(10);
+    // Radio off then 10 MHz. WiFi.config() above enables STA on arduino-esp32, so
+    // without this the radio would stay powered right through the acquisition.
+    _power.enterAcquisitionMode();
 }
 
 void App::run()
@@ -62,7 +64,7 @@ void App::run()
     switch (step.action)
     {
     case BELT_ACTION_SLEEP_UNTIL_TRIGGER:
-        _power.sleepUntilTrigger();
+        _power.deepSleepUntilTrigger(MAGNET_TRIGGER_PIN);
         break;
 
     case BELT_ACTION_RUN_CYCLE_ITERATION:
@@ -71,7 +73,7 @@ void App::run()
 
     case BELT_ACTION_SLEEP_TIMER:
         _acq->endCycle();
-        _power.sleepTimer(serverConfig.sleep_time_min);
+        _power.deepSleepTimer(serverConfig.sleep_time_min);
         break;
 
     case BELT_ACTION_ENTER_OTA:
@@ -115,7 +117,7 @@ void App::runCycleIteration()
         return;
     }
 
-    setCpuFrequencyMhz(240);
+    _power.enterTransmitMode();
     if (_wifi.connect(WIFI_SSID, WIFI_PASSWORD))
     {
         if (_tcp.connect(SERVER_HOST, TCP_SERVER_PORT))
@@ -124,7 +126,7 @@ void App::runCycleIteration()
             // ring has not wrapped; a wrapped ring needs both ranges sent in order,
             // which is T45 in round 7.
             ReadPlan plan = _ring->plan();
-            uint16_t batt = _power.readBatteryMv();
+            uint16_t batt = esp32_read_battery_mv();
             ServerConfig newConfig;
             if (_tcp.sendData(plan.first.ptr, plan.first.len, batt, newConfig))
             {
@@ -137,7 +139,14 @@ void App::runCycleIteration()
             }
             _tcp.disconnect();
         }
-        _wifi.disconnect();
     }
-    setCpuFrequencyMhz(10);
+
+    // Unconditional, outside every branch — the radio goes off whether the connect
+    // succeeded, failed or was never attempted. Production does the same at
+    // main.cpp:300-301. The refactor turned it off only inside the success branch,
+    // which is R7.
+    //
+    // NOTE: that this line is reached on every path is STRUCTURAL, not tested — the
+    // cycle lives in Arduino code a host build cannot reach. Round 9 extracts it.
+    _power.enterAcquisitionMode();
 }
