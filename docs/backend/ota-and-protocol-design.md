@@ -283,7 +283,33 @@ Validação do formulário de config (`validate_config_form`), rescrita na mesma
 | antigo (lê 8 B) | backend novo (manda 10 B) | **OK, degrada limpo.** Lê os 8 primeiros bytes — mesmos 4 campos, mesma ordem —, deixa 2 não lidos num socket que vai fechar, e nunca entra em OTA. |
 | novo (exige 10 B) | `pyFiles/win_server.py` | **OK, byte a byte.** Empacota `'<HHHHH'` com os mesmos campos, OTA inclusive. |
 | novo | backend novo | **OK.** Contrato desta rodada. |
-| novo | `pyFiles/server_lix_csv2.py` | **QUEBRADO.** Esse servidor responde 8 bytes; o firmware espera 10, desiste após 5 s e fica **sem config nenhuma**, mantendo os defaults em silêncio. Device parece saudável e ignora toda mudança de configuração para sempre. `server_lix_csv2.py` precisa de aviso no cabeçalho ou aposentadoria. |
+| novo | `pyFiles/server_lix_csv2.py` | **QUEBRADO.** Esse servidor responde 8 bytes; o firmware espera 10, desiste após 5 s e fica **sem config nenhuma**, mantendo os defaults em silêncio. Device parece saudável e ignora toda mudança de configuração para sempre. |
+
+#### Patch sugerido para `server_lix_csv2.py` — para o bigboss aplicar
+
+> **Não aplicado por nós, e não testado por nós.** O arquivo vive em **outro repositório** (`SIF-DI241794-...`, privado) que está **em produção**. Ninguém deste time tocou nele. Não temos como executá-lo aqui: o texto abaixo foi derivado por leitura, comparando-o com `win_server.py`, que já emite os 10 bytes corretos.
+
+Uma linha, em `pyFiles/server_lix_csv2.py:124`.
+
+Antes:
+```python
+                    interTriggerTime = 5 
+                    resposta = struct.pack('<HHHH', sleepTime, untriggerTime, nSamples, interTriggerTime)
+```
+
+Depois:
+```python
+                    interTriggerTime = 5
+                    update = 0   # 1 coloca o proximo device em modo OTA
+                    resposta = struct.pack('<HHHHH', sleepTime, untriggerTime, nSamples, interTriggerTime, update)
+```
+
+`update = 0` como default é deliberado: este servidor não tem interface para armar OTA, e um `1` fixo colocaria **todo** device que transmitisse em modo AP. Quem quiser usar este servidor para atualizar um device troca para `1`, atualiza, e volta para `0` — é o que o `win_server.py` faz hoje, e note que ele está com **`update = 1` fixo** (`win_server.py:113`), o que é uma armadilha própria dele.
+
+**O que verificar depois de aplicar** (quem aplicar não terá a nossa suíte):
+1. o device recebe **10 bytes** e não expira a espera — no serial do firmware, a linha de resposta do servidor aparece em vez de "Nenhuma resposta recebida do servidor";
+2. os **quatro campos existentes chegam inalterados** — sleep, untrigger, nSamples e interTrigger com os mesmos valores de antes do patch;
+3. com `update = 0`, o device **não** reinicia em modo AP depois da transmissão.
 
 ### 2.8 Lado firmware (informativo — dono: sifemb-gomi, eu não edito)
 
@@ -546,17 +572,31 @@ Duas formas candidatas para quando for a hora (nenhuma projetada agora, ambas cu
 - **armamento confirmado pelo device**: o device responde algo antes de reiniciar, e só então o servidor limpa;
 - **re-armar até ver o device em modo AP**: o flag persiste até uma evidência externa de que o AP subiu.
 
-### L3 — `maxlen=50` do histórico foi dimensionado antes da D1 — **escalado**
+### L3 — Profundidade do histórico — **DECIDIDO E APLICADO: 500** (bigboss, 2026-07-27)
 
-`AppState.connections` é um `deque(maxlen=50)` escolhido quando um wake significava **uma** conexão. Pela D1 um wake é até `max_acq=5` aquisições, cada uma com sua conexão TCP e sua linha de histórico: cinco sensores dão ~25 linhas por rodada, então o buffer guarda cerca de duas rodadas. E a linha que sai primeiro, justamente quando a planta está mais movimentada, é o registro de OTA — o único rastro de qual sensor está prestes a sumir num AP.
+**Questão levantada:** `AppState.connections` era um `deque(maxlen=50)`, escolhido quando um wake significava **uma** conexão. Pela D1 um wake é até `max_acq=5` aquisições, cada uma com sua conexão TCP e sua linha de histórico. Cinco sensores dão ~25 linhas por rodada, então 50 guardava **duas rodadas**. E a linha que saía primeiro, justamente quando a planta está mais movimentada, era o registro de OTA — o único rastro de qual sensor está prestes a sumir num AP.
 
-É número de produto, não decisão de engenharia: escalado ao lead/bigboss. `test_connections_max_50` fixa o 50, então mudar exige tocar num teste — de propósito.
+**Decisão:** `HISTORY_MAX_CONNECTIONS = 500` (`config/settings.py`), ~20 rodadas. Aplicado no commit `36623bd`. O número que importa não é 500: é **quantas rodadas o operador ainda consegue enxergar a linha de OTA**. Se `max_acq` ou o número de sensores mudar muito, é essa conta que se refaz, não o 500.
 
-### L4 — `POST /ota` sem autenticação — **escalado**
+Custo: uma `ConnectionEntry` são quatro campos pequenos e um datetime, então 500 delas ficam na casa de algumas centenas de KB, num processo que já mantém 700 KB por conexão em voo. Não é trade-off.
 
-A interface web é **nova** no refactor: produção não tinha UI nenhuma no servidor, então a DEC-0 não dá cobertura aqui. O Flask sobe em `0.0.0.0` sem autenticação, e `POST /ota` faz um sensor reiniciar em Access Point aberto com senha fixa (`12345678`) servindo um endpoint de upload de firmware.
+Fixado por dois testes: `test_connections_capped_at_500` (literal, não a constante) e `test_connections_drop_the_oldest_first`. O segundo existe porque nada fixava de **qual ponta** o buffer descarta — e se descartasse pela mais nova, subir o teto de 50 para 500 teria **piorado** o problema, com a suíte inteira verde.
 
-A cadeia completa — "estar no WiFi da planta" → "firmware arbitrário num device" — não existia antes desta rodada. Pode ser perfeitamente aceitável numa VLAN isolada, e é exatamente por isso que precisa ser **decisão de alguém**, não um default que ninguém notou.
+**Questão encerrada.** Não reabrir sem refazer a aritmética acima.
+
+### L4 — `POST /ota` sem autenticação — **RISCO LEVANTADO E ACEITO** (bigboss, 2026-07-27)
+
+Isto não passou despercebido: foi levantado na auditoria do backend, escalado, e **aceito** com a premissa registrada abaixo. Está aqui para que alguém consiga **reabrir** a questão quando a premissa mudar.
+
+**A cadeia, explícita.** O Flask sobe em `0.0.0.0:8080` sem autenticação nenhuma. Qualquer um com acesso de rede faz `POST /ota` com `armed=1`. O próximo device que transmitir reinicia como Access Point **aberto**, SSID `Update driver - <MAC>`, senha fixa `12345678`, servindo uma página de upload de firmware na porta 80 por 5 minutos. Ou seja: de "estar na rede da planta" a "firmware arbitrário rodando num sensor", sem credencial em nenhum ponto.
+
+**Sem cobertura da DEC-0.** A DEC-0 protege comportamento que produção já tinha. Produção **não tinha interface web nenhuma** no servidor — a UI é novidade do refactor, e essa cadeia não existia antes desta rodada. Não dá para chamar isso de fidelidade ao original.
+
+**Premissa da aceitação — é isto que precisa ser reavaliado se mudar:** a rede dos sensores é tratada como **isolada**, sem acesso de terceiros e sem rota para fora. Sob essa premissa o custo de autenticação (gerir credencial num laptop de planta, operador travado do lado de fora no meio de uma manutenção) supera o ganho.
+
+**A premissa deixa de valer se:** a rede da planta passar a ser compartilhada com WiFi corporativo ou de visitantes; o servidor ganhar rota para fora ou VPN; a planta rodar em rede plana com outros equipamentos; ou o servidor sair da máquina dedicada para uma de uso geral.
+
+**Por onde começar, se o dia chegar** (nenhuma projetada agora, em ordem de custo): bind em `127.0.0.1` mais um túnel SSH para acesso remoto; ou autenticação básica HTTP só na rota `/ota`, deixando `GET /` livre para leitura; ou senha de AP por device derivada do MAC em vez do `12345678` fixo — esta última é firmware, não backend.
 
 ### L5 — Nome do arquivo CSV vem do IP do peer
 
