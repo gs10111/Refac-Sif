@@ -42,7 +42,9 @@ from app_state import AppState, ConnectionEntry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-running    = True       # set to False by exit_monitor to stop all loops
+running    = True       # cleared by exit_monitor; stops the accept loop only —
+                        # a transfer already in progress drains to completion
+                        # or to its socket timeout (see docs/backend, L1b)
 data_queue = queue.Queue()  # (ip, timestamp, samples) tuples consumed by save_data
 
 
@@ -127,7 +129,9 @@ def handle_client(conn, addr, state: AppState):
     Args:
         conn:  accepted socket for this connection
         addr:  (ip, port) tuple of the remote device
-        state: shared AppState — read for config, written for connection log
+        state: shared AppState — snapshots the config and CLAIMS the one-shot
+               OTA arming (clearing it), gives the arming back if the send
+               fails, and appends the connection to the history
     """
     logging.info(f"Connected: {addr[0]}:{addr[1]}")
     conn.settimeout(CLIENT_TIMEOUT_SEC)

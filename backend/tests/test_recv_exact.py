@@ -55,6 +55,11 @@ def test_recv_exact_concatenates_one_byte_chunks():
 
 
 def test_recv_exact_requests_only_the_missing_bytes():
+    # DO NOT REMOVE. This is the ONLY test in the suite that pins the byte
+    # count recv_exact asks for. Every handle_client test drives a MagicMock,
+    # which ignores the requested size and returns the next side_effect item
+    # regardless — so with this test gone, a recv_exact asking for the wrong
+    # count passes all 110 tests. See docs/backend, L6.
     conn = MagicMock()
     conn.recv.side_effect = [b'abcd', b'efghij']
     recv_exact(conn, 10)

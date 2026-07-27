@@ -185,6 +185,11 @@ class AppState:
         self.ota_armed   = bool(DEFAULT_UPDATE)   # NOVO
         self.lock        = threading.Lock()
 
+    def set_ota_armed(self, armed: bool) -> None:
+        """Arma ou desarma o flag one-shot (rota POST /ota)."""
+        with self.lock:
+            self.ota_armed = bool(armed)
+
     def take_config_for_send(self) -> tuple[DeviceConfig, bool]:
         """Snapshot da config + CLAIM atômico do OTA one-shot.
 
@@ -204,54 +209,90 @@ class AppState:
 
 `take_config_for_send` faz leitura da config e claim do OTA **na mesma tomada de lock** — sem isso, dois devices conectados simultaneamente poderiam ambos ler `ota_armed=True` e ambos entrariam em OTA.
 
+`set_ota_armed` existe para que a rota Flask não escreva `state.lock` à mão: toda mutação do armamento passa por um único método.
+
 ### 2.5 `backend/server/tcp_server.py`
+
+Implementado assim (`tcp_server.py:170-198`):
 
 ```python
 config, ota = state.take_config_for_send()
 response = pack_server_config(
-    config.sleep_min, config.idle_min, config.max_acq, config.cooldown_sec,
-    1 if ota else 0,
+    config.sleep_min, config.idle_min,
+    config.max_acq,   config.cooldown_sec, int(ota)
 )
+
 try:
     conn.sendall(response)
-except OSError:
+    logging.info(f'Config sent to {addr[0]} (update={int(ota)})')
+except OSError as e:
     if ota:
-        state.rearm_ota()      # ninguém recebeu — devolve o armamento
-    raise
-logging.info(f'Config sent to {addr[0]} (update={int(ota)})')
+        state.rearm_ota()   # ninguém recebeu — devolve o armamento
+        ota = False         # e a entrada do histórico diz a verdade
+    logging.error(f'Config not delivered to {addr[0]}: {e}')
 
 with state.lock:
     state.connections.append(ConnectionEntry(..., ota_sent=ota))
 ```
-Junto: mover o `ConnectionEntry` para **antes** do `sendall` não resolve (não saberíamos se o flag foi entregue); a correção de **B7** é registrar a entrada também no caminho de erro, com `ota_sent=False`.
-O docstring do módulo (`tcp_server.py:11-13`) muda de `[8 bytes]`/4 campos para `[10 bytes]`/5 campos.
 
-### 2.6 `backend/web/server.py`
+O `OSError` é **tratado ali, não relançado** — de propósito. Relançar pularia o registro no histórico, e a correção de **B7** é justamente registrar a conexão também no caminho de erro: as amostras chegaram. `ota` é forçado a `False` nesse caminho porque o flag não chegou ao device; um histórico que afirmasse o contrário mandaria o operador procurar um AP que nunca vai aparecer.
+
+Consequência de hierarquia de exceções, deliberada: `socket.timeout` **é** `TimeoutError`, que **é** subclasse de `OSError`, então um `sendall` que expira cai neste `except` local em vez do `except socket.timeout` externo. É o comportamento desejado — envio que expirou é envio que não chegou, logo o armamento volta e a conexão continua registrada.
+
+O docstring do módulo (`tcp_server.py:11-14`) passou de `[8 bytes]`/4 campos para `[10 bytes]`/5 campos.
+
+### 2.6 `backend/web/server.py` — rota separada (DEC-5)
+
+O formulário de config **não** lê nem escreve o armamento. Rota própria:
 
 ```python
-@app.route('/config', methods=['POST'])
-def update_config():
-    ...validação dos 4 inteiros (inalterada)...
-    ota = 'ota_armed' in request.form      # checkbox: só chega no POST quando marcado
-    with state.lock:
-        state.config.sleep_min = ...
-        state.ota_armed = ota
+@app.route('/ota', methods=['POST'])
+def update_ota():
+    armed = request.form.get('armed')
+    if armed not in ('0', '1'):
+        reason = ('armed: campo ausente.' if armed is None
+                  else f'armed: "{armed}" nao e um valor valido.')
+        return Response(f'{reason} Use 1 para armar o OTA ou 0 para desarmar.',
+                        status=400, mimetype='text/plain')
+    state.set_ota_armed(armed == '1')
     return redirect('/', 303)
 ```
-`GET /` passa `ota_armed=state.ota_armed` (lido dentro do lock, junto da cópia da config) para o template.
-Nota: entrada inválida (400) **não** pode alterar `ota_armed` — o `return` de erro acontece antes de qualquer escrita, o que já é o caso hoje.
+
+`GET /` lê `ota_armed` **dentro do mesmo lock** da cópia da config e passa ao template, e responde com `Cache-Control: no-store`: a página é o único instrumento do operador, e um render de cache mostrando armamento velho é pior que página nenhuma.
+
+Validação do formulário de config (`validate_config_form`), rescrita na mesma rodada:
+- **todos** os campos inválidos são reportados de uma vez, um por linha, cada um nomeando o campo e o motivo — o operador está de pé com um laptop na planta, e uma segunda rejeição depois de corrigir a primeira parece formulário quebrado;
+- ordem fixa, vinda de `FORM_FIELDS`, nunca de iteração de dict;
+- nada é escrito quando algo está errado — config aplicada pela metade é config que operador nenhum escolheu, exibida como se alguém tivesse querido;
+- limite superior `UINT16_MAX` (65535), que mora em `protocol/packet.py` porque é a **largura do campo no fio**, não política. Sem ele o formulário aceitava `sleep_min=999999`, mostrava salvo, e toda conexão de device morria dentro de `pack_server_config` num `struct.error` engolido pelo `except` largo.
 
 ### 2.7 `backend/web/templates/index.html`
 
-- Painel esquerdo, abaixo de "Cooldown (s)":
-  `<input type="checkbox" name="ota_armed" {% if ota_armed %}checked{% endif %}>` com label **"OTA na próxima transmissão"** + badge de estado (`ARMADO` em `#e94560` / `desarmado` em cinza).
-- Aviso curto ao lado quando armado: *"o próximo device que transmitir vai reiniciar em modo AP"*.
-- Tabela de histórico ganha a coluna **OTA** (`SIM` quando `entry.ota_sent`, `-` caso contrário) e o `colspan` da linha vazia passa de 4 para 5.
+**Dois botões, não checkbox.** Checkbox só teria efeito no segundo clique do SALVAR, e entre marcar e salvar a página mostraria armado com nada armado — exatamente a ambiguidade que se quer eliminar. O botão **é** o ato.
+
+- Painel esquerdo, bloco "Atualizacao OTA" abaixo do formulário:
+  - desarmado: faixa `OTA desarmado` + botão **ARMAR OTA** (`POST /ota`, `armed=1`);
+  - armado: faixa `OTA ARMADO — proximo device que transmitir` em `#e94560` + botão **DESARMAR** (`armed=0`, estilo secundário, para armar e desarmar não parecerem o mesmo ato).
+- Histórico ganha a coluna **OTA**: a linha que levou o flag recebe `class="ota-row"` (fundo tingido, borda esquerda `#e94560`) **e** um `<span class="ota-badge">OTA</span>`. Cor, posição **e** texto — cor sozinha falha para operador daltônico e em impressão preto e branco, que acontece em planta.
+- `colspan` da linha vazia: 4 → 5.
+
+### 2.9 Matriz de compatibilidade firmware × servidor
+
+| Firmware | Servidor | Resultado |
+|---|---|---|
+| antigo (lê 8 B) | backend novo (manda 10 B) | **OK, degrada limpo.** Lê os 8 primeiros bytes — mesmos 4 campos, mesma ordem —, deixa 2 não lidos num socket que vai fechar, e nunca entra em OTA. |
+| novo (exige 10 B) | `pyFiles/win_server.py` | **OK, byte a byte.** Empacota `'<HHHHH'` com os mesmos campos, OTA inclusive. |
+| novo | backend novo | **OK.** Contrato desta rodada. |
+| novo | `pyFiles/server_lix_csv2.py` | **QUEBRADO.** Esse servidor responde 8 bytes; o firmware espera 10, desiste após 5 s e fica **sem config nenhuma**, mantendo os defaults em silêncio. Device parece saudável e ignora toda mudança de configuração para sempre. `server_lix_csv2.py` precisa de aviso no cabeçalho ou aposentadoria. |
 
 ### 2.8 Lado firmware (informativo — dono: sifemb-gomi, eu não edito)
 
-`lib/protocol/packet.h`: `struct ServerConfig` ganha `uint16_t update;` como **quinto e último** campo (`packed`, 10 B).
-`src/services/connectivity/tcp_client.cpp:31`: a espera `_client.available() < sizeof(ServerConfig)` passa a exigir 10 bytes automaticamente — mas o timeout de 5000 ms segue válido.
+Estado verificado em 2026-07-27, lendo `lib/` e `src/` ao lado do backend:
+
+- `lib/protocol/packet.h`: **já feito.** `struct ServerConfig` tem `uint16_t update;` como quinto e último campo, `packed`, com `static_assert(sizeof(ServerConfig) == 10)` e `DEFAULT_UPDATE 0`. Bate byte a byte com `pack_server_config('<HHHHH', ...)`.
+- `src/services/connectivity/tcp_client.cpp:31`: a espera `_client.available() < sizeof(ServerConfig)` acompanhou o struct de 8 para 10 sem edição; o timeout de 5000 ms segue válido.
+- **Nada em `src/` age sobre `update`** — `grep` por `update`, `Preferences`, `restart`, `softAP`, `WIFI_AP` em `src/`: zero ocorrências. Ver **L2** na seção 7: hoje armar o OTA consome o flag e não acontece nada no device.
+- `packet.h` declara `parse_server_config(bytes, len, out)` com contrato explícito (exige os 10 bytes, deixa `out` intacto em frame curto), mas `tcp_client.cpp` não chama essa função — lê direto para dentro do struct com `readBytes`. A checagem de `available()` torna isso seguro hoje, então não é bug vivo, mas o decodificador cuidadoso está sem uso e o caminho vivo é o sem contrato. Observação para o dono de `src/`.
 Fluxo OTA do original a reproduzir: `main.cpp:282-289` (grava `Preferences("config").putBool("update", true)` + `ESP.restart()`) e `main.cpp:73-96` (no boot, se o flag está setado: limpa o flag, sobe `WIFI_AP` `"Update driver - <MAC>"` / `12345678`, `configureOtaServer()`, timeout de 5 min → `ESP.restart()`).
 
 ---
@@ -260,7 +301,7 @@ Fluxo OTA do original a reproduzir: `main.cpp:282-289` (grava `Preferences("conf
 
 ### 3.1 Decisão vigente: (a) one-shot na próxima conexão — **D3, binding**
 
-O operador marca "OTA na próxima transmissão"; o servidor manda `update=1` para o **próximo** device que completar uma transmissão e limpa o flag na mesma operação atômica. O device seguinte recebe `update=0`.
+O operador clica **ARMAR OTA**; o servidor manda `update=1` para o **próximo** device que completar uma transmissão e limpa o flag na mesma operação atômica. O device seguinte recebe `update=0`.
 
 ### 3.2 Comparação das três semânticas
 
@@ -319,95 +360,142 @@ Recomendação: manter D4 agora. Se a manutenção de campo doer (é o cenário 
 
 ---
 
-## 4. Lista de testes que falham primeiro (TDD)
+## 4. A suíte como ela existe (110 casos)
 
-Ordem de implementação: protocolo → estado → TCP → web. Cada bloco: escrever, ver falhar, implementar o mínimo.
+Escrita em TDD, um bloco por vez: teste falhando primeiro, mínimo para passar, depois o próximo. Esta seção descreve o que **existe**, não o que se planejou.
 
-### 4.1 `backend/tests/test_packet.py` (arquivo NOVO)
+Baseline: `cd backend && ./.venv/bin/python -m pytest tests/ -q` → **110 passed**.
+
+### 4.1 `backend/tests/test_packet.py` — 14 casos, contrato de fio
 
 | Teste | Asserção |
 |---|---|
 | `test_server_config_size_is_10` | `SERVER_CONFIG_SIZE == 10` |
-| `test_pack_server_config_returns_10_bytes` | `len(pack_server_config(240,20,5,5,0)) == 10` |
-| `test_pack_server_config_field_order` | `struct.unpack('<HHHHH', pack_server_config(240,20,5,5,1)) == (240,20,5,5,1)` |
-| `test_pack_server_config_matches_win_server_bytes` | `pack_server_config(240,20,5,5,1) == b'\xf0\x00\x14\x00\x05\x00\x05\x00\x01\x00'` (golden do `win_server.py:114`) |
-| `test_pack_server_config_rejects_update_out_of_range` | `pytest.raises(ValueError)` para `update=2` |
-| `test_pack_server_config_requires_update_argument` | `pytest.raises(TypeError)` chamando com 4 argumentos |
-| `test_parse_sample_ignores_trailing_bytes` | `parse_sample` de 18 B devolve 8 campos (regressão, já passa) |
+| `test_pack_server_config_returns_10_bytes` | `len(...) == SERVER_CONFIG_SIZE` |
+| `test_pack_server_config_field_order` | `struct.unpack('<HHHHH', pack(240,20,5,5,1)) == (240,20,5,5,1)` |
+| `test_pack_server_config_matches_win_server_golden_bytes` | `== b'\xf0\x00\x14\x00\x05\x00\x05\x00\x01\x00'`, golden de `win_server.py:114` |
+| `test_pack_server_config_defaults_match_settings` | defaults + `update=0` reproduzem o golden |
+| `test_pack_server_config_requires_update_argument` | `TypeError` com 4 argumentos |
+| `test_pack_server_config_rejects_update_out_of_range[2, 65535, -1]` | `ValueError` (3 casos) |
+| `test_csv_columns_match_original_header` | `CSV_COLUMNS` == literal de 9 strings do servidor de produção |
+| `test_sample_columns_are_the_header_without_the_battery` | `CSV_COLUMNS == SAMPLE_COLUMNS + ['battery_voltage']` |
+| `test_frame_size_constants` | 18 / 4 / 2 |
+| `test_parse_sample_field_order_and_signedness` | `'<I7h'` ida e volta, com negativos |
+| `test_parse_sample_returns_one_field_per_sample_column` | 8 campos |
 
-### 4.2 `backend/tests/test_app_state.py` (acrescentar)
+O header do CSV é comparado contra um **literal**, não contra `CSV_COLUMNS`: comparar com a constante só provaria que o writer concorda com ela — que era exatamente o caso quando ambos estavam errados.
+
+### 4.1b `backend/tests/test_recv_exact.py` — 9 casos, framing
+
+`returns_exactly_n_bytes` | `uses_one_recv_when_everything_arrives_at_once` | `concatenates_one_byte_chunks` | **`requests_only_the_missing_bytes`** | `raises_connection_error_when_peer_closes` | `does_not_spin_when_peer_closes` | `error_reports_partial_progress` (`'3/8'`) | `zero_bytes_returns_empty_without_calling_recv` | `propagates_socket_timeout`
+
+O stub de peer fechado **conta chamadas** e levanta `AssertionError` depois de 10, em vez de devolver `b''` para sempre: teste que pode travar acaba travando a CI de alguém às 3 da manhã. `requests_only_the_missing_bytes` está em negrito de propósito — ver **L6** na seção 7.
+
+### 4.2 `backend/tests/test_app_state.py` — 6 antigos + 12 do armamento
 
 | Teste | Asserção |
 |---|---|
 | `test_ota_armed_defaults_false` | `AppState().ota_armed is False` |
-| `test_take_config_for_send_returns_false_when_disarmed` | `_, ota = state.take_config_for_send(); ota is False` |
-| `test_take_config_for_send_claims_once_then_clears` | armar; 1ª chamada `True`; 2ª `False`; `state.ota_armed is False` |
-| `test_take_config_for_send_returns_config_snapshot` | mutar `state.config` depois da chamada não altera a cópia retornada |
-| `test_take_config_for_send_is_atomic_under_concurrency` | armar; 20 threads chamam; **exatamente 1** recebe `True` |
-| `test_rearm_ota_sets_flag_back` | claim → `rearm_ota()` → próximo claim devolve `True` |
-| `test_connection_entry_ota_sent_defaults_false` | `ConnectionEntry(...).ota_sent is False` |
+| `test_ota_armed_default_matches_settings` | `is bool(DEFAULT_UPDATE)` |
+| `test_set_ota_armed_arms_and_disarms` | ida e volta |
+| `test_take_config_for_send_returns_false_when_disarmed` | `ota is False` |
+| `test_take_config_for_send_returns_current_config_values` | devolve os 4 valores correntes, tipo `DeviceConfig` |
+| `test_take_config_for_send_returns_config_snapshot` | mutar `state.config` depois não altera a cópia devolvida |
+| `test_take_config_for_send_claims_once_then_clears` | 1ª `True`, 2ª `False`, `ota_armed is False` |
+| `test_take_config_for_send_is_atomic_under_concurrency` | `threading.Barrier(20)`; **exatamente 1** recebe `True`; erros de worker coletados e conferidos vazios |
+| `test_rearm_ota_gives_arming_back_after_failed_send` | claim → `rearm_ota()` → próximo claim `True` |
+| `test_rearm_ota_twice_does_not_double_arm` | dois rearms → um único claim `True` (booleano, não contador) |
+| `test_connection_entry_ota_sent_defaults_false` | default `False` |
+| `test_connection_entry_records_ota_sent` | aceita `ota_sent=True` |
 
-### 4.3 `backend/tests/test_tcp_server.py` (acrescentar / atualizar)
+O teste de concorrência usa `Barrier` para as 20 threads reivindicarem no mesmo instante — sem ele o "teste de corrida" passa por sorte de escalonamento. `test_connections_max_50` (antigo) fixa o `maxlen=50`, então mexer nesse número exige tocar num teste: ver **L3**.
 
-Atualizar: `test_handle_client_sends_config_from_state` passa a desempacotar `'<HHHHH'` (falha hoje: `struct.error: unpack requires a buffer of 8 bytes`).
+### 4.3 `backend/tests/test_tcp_server.py` — 3 antigos (1 atualizado) + 25
 
-**Protocolo/OTA**
+`test_handle_client_sends_config_from_state` foi **atualizado** para desempacotar `'<HHHHH'` e conferir o 5º campo. Ele estava vermelho por afirmar o contrato de 8 bytes; corrigir a asserção foi a correção inteira — nenhuma mudança de produção mereceu crédito por isso.
 
-| Teste | Asserção |
-|---|---|
-| `test_handle_client_sends_10_byte_response` | `len(conn.sendall.call_args[0][0]) == 10` |
-| `test_handle_client_sends_update_zero_when_disarmed` | 5º campo `== 0` |
-| `test_handle_client_sends_update_one_when_armed` | armar; 5º campo `== 1` |
-| `test_handle_client_clears_ota_after_send` | após 1 conexão armada, `state.ota_armed is False` |
-| `test_second_client_gets_update_zero` | duas conexões seguidas; 1ª `update=1`, 2ª `update=0` |
-| `test_handle_client_logs_ota_sent_in_entry` | `state.connections[0].ota_sent is True` na conexão armada |
-| `test_handle_client_rearms_ota_when_send_fails` | `conn.sendall.side_effect = OSError`; `state.ota_armed is True` de novo |
-| `test_concurrent_clients_only_one_gets_update` | 5 conexões em paralelo com o flag armado; exatamente 1 recebe `update=1` |
-
-**Bugs do item 1**
-
-| Teste | Bug | Asserção |
-|---|---|---|
-| `test_handle_client_reads_battery_when_payload_not_frame_aligned` | B1 | payload de `18*3 + 16` B + bateria `3800`: `entry.battery_mv == 3800`, `entry.n_samples == 3`, config enviada |
-| `test_handle_client_discards_trailing_partial_frame` | B1 | mesmo cenário: **3** amostras, não 4 |
-| `test_handle_client_handles_split_header` | B2 | `recv` devolve 2 B + 2 B do header: `expected` correto, config enviada |
-| `test_handle_client_does_not_loop_forever_when_peer_closes_before_battery` | B3 | `recv` devolve `b''` no ponto da bateria: `handle_client` **retorna** (teste com `pytest.mark.timeout` ou `side_effect` finito que levantaria `StopIteration` se o loop insistisse), `battery_mv == -1`, config **ainda** enviada |
-| `test_handle_client_sends_config_even_when_battery_missing` | B3 | como no original: `sendall` chamado uma vez |
-| `test_handle_client_csv_rows_have_battery_column_on_truncated_transfer` | B4 | payload truncado: toda linha enfileirada tem `len(SAMPLE_COLUMNS) + 1` campos |
-| `test_handle_client_rejects_absurd_expected_size` | B8 | header `0xFFFFFFFF`: retorna sem acumular, sem `sendall`, sem entrada no histórico |
-| `test_handle_client_logs_connection_even_when_send_fails` | B7 | `sendall` levanta `OSError`: existe `ConnectionEntry` com `ota_sent False` |
-
-### 4.4 `backend/tests/test_web_server.py` (acrescentar)
+**Framing (B1/B2/B8)**
 
 | Teste | Asserção |
 |---|---|
-| `test_get_index_shows_ota_checkbox` | `'name="ota_armed"'` no corpo; **sem** `checked` por default |
-| `test_post_config_arms_ota_when_checkbox_present` | POST com `ota_armed='on'` → `state.ota_armed is True`, 303 |
-| `test_post_config_disarms_ota_when_checkbox_absent` | armar antes; POST sem o campo → `state.ota_armed is False` |
-| `test_post_config_invalid_input_does_not_change_ota` | armar; POST com `sleep_min='abc'` → 400 **e** `state.ota_armed is True` |
-| `test_get_index_shows_armed_badge` | `state.ota_armed = True` → `'ARMADO'` no corpo |
-| `test_get_index_shows_ota_column_in_history` | entrada com `ota_sent=True` → `'<td>SIM</td>'` no corpo |
-| `test_get_index_history_empty_row_spans_five_columns` | `'colspan="5"'` |
+| `test_handle_client_parses_every_complete_frame` | 3 frames → `n_samples == 3` |
+| `test_handle_client_reads_battery_when_payload_is_not_frame_aligned` | `18*3 + 16` B: `battery_mv == 3800` (não engolido pelo parser) |
+| `test_handle_client_discards_trailing_partial_frame_legacy_firmware_compat` | mesmo cenário: **3** amostras, não 4 |
+| `test_handle_client_reassembles_split_header` | header em 1 B + 3 B |
+| `test_handle_client_reassembles_chunked_payload` | corpo em 3 pedaços |
+| `test_handle_client_handles_empty_payload` | header 0: config enviada, `n_samples == 0`, `recv_exact(0)` não toca no socket |
+| `test_handle_client_rejects_absurd_expected_size` | `0xFFFFFFFF`: `recv.call_count == 1`, sem `sendall`, sem histórico |
+| `test_handle_client_rejects_payload_over_max` | `MAX_PAYLOAD_BYTES + 1`: idem |
 
-### 4.5 Pendente de decisão (não escrevo sem resposta — §6 Q1)
+As duas rejeições afirmam `recv.call_count == 1` — sem isso passariam por "estourou durante a leitura" em vez de "recusou antes de alocar".
+
+**Bateria (B3, DEC-4)** — `sends_config_when_battery_is_missing` | `logs_invalid_battery_when_battery_is_missing` | `sends_config_when_battery_times_out`. Todos fixam a degradação de produção: bateria `-1` **e** `sendall` chamado uma vez.
+
+**Linhas do CSV (B4)** — `queues_rows_with_the_battery_column` | `queues_rows_with_invalid_battery_when_battery_is_missing` | `queues_nothing_when_payload_is_truncated`. Fixture `autouse` drena a `data_queue` global em volta de cada teste, e `queued_rows()` lê o que o `save_data` receberia de fato.
+
+**Saída CSV (B5/DEC-3, B6)** — `save_data_writes_the_original_csv_header` | `save_data_writes_the_battery_in_the_last_column` | `save_data_keeps_the_csv_when_the_drive_copy_fails[2]` | `save_data_does_not_report_a_save_failure_when_only_the_copy_failed[2]` | `save_data_reports_the_drive_copy_failure[2]`. Rodam o `save_data` de verdade (fila + sentinela + leitura do arquivo), com `chdir(tmp_path)` e `subprocess.run` monkeypatchado — nunca chamam `gio`. Os parametrizados cobrem `CalledProcessError` (gvfs ausente) e `FileNotFoundError` (gio não instalado).
+`writes_the_battery_in_the_last_column` existe para o verde não poder ser obtido **encurtando** o header em vez de renomear a coluna.
+
+**OTA no fio (B0/D3, B7)**
 
 | Teste | Asserção |
 |---|---|
-| `test_sample_columns_match_original_csv_header` | `SAMPLE_COLUMNS == ['timestamp','x_data','x_gyro','y_data','y_gyro','z_data','z_gyro','temp']` e a coluna de bateria é `battery_voltage` |
+| `test_handle_client_sends_update_zero_when_disarmed` / `..._one_when_armed` | 5º campo 0 / 1 |
+| `test_handle_client_clears_ota_after_send` | `ota_armed is False` depois |
+| `test_handle_client_second_connection_gets_update_zero` | sequencial: 1ª `1`, 2ª `0` |
+| `test_handle_client_logs_ota_sent_in_entry` / `..._not_sent_when_disarmed` | `ota_sent` no histórico |
+| `test_handle_client_sends_the_claimed_snapshot_not_a_later_config` | `take_config_for_send` embrulhado num mock que muda a config logo após o snapshot: `call_count == 1` **e** o fio carrega o valor antigo |
+| `test_handle_client_rearms_ota_when_send_fails` | `OSError` no `sendall`: flag volta **e** a conexão seguinte recebe `update=1` |
+| `test_handle_client_does_not_rearm_when_send_succeeds` | espião em `rearm_ota`: `call_count == 0` |
+| `test_handle_client_logs_entry_when_send_fails` | entrada registrada mesmo com envio falho |
+| `test_handle_client_logs_ota_not_sent_when_send_fails` | `ota_sent is False` nessa entrada |
 
-Total estimado: **16 atuais + ~38 novos**.
+`second_connection_gets_update_zero` é **sequencial** de propósito: a propriedade aqui é "o segundo chamador vê o flag limpo". Que dois claims simultâneos não possam ambos vencer é outra propriedade, mora no `test_app_state`, e lá o `Barrier` torna a sobreposição real.
+`rearms_ota_when_send_fails` não se contenta com `ota_armed is True` — essa asserção passaria trivialmente contra código que nunca reivindica o flag; por isso roda uma segunda conexão e exige que ela receba `update=1`, que é o que o operador de fato experimenta.
+
+### 4.4 `backend/tests/test_web_server.py` — 8 antigos + 26
+
+**Validação do formulário (13 casos)** — `rejects_zero_max_acq` | `rejects_zero_in_any_field[4]` | `rejects_value_above_uint16[4]` | `accepts_uint16_maximum` (limite **inclusivo**) | `error_message_names_the_offending_field` | `error_message_mentions_the_protocol_limit` | `error_message_lists_every_offender`.
+Cinco dos casos afirmam `config_tuple(state)` idêntico antes e depois da rejeição. É a asserção mais valiosa do bloco e o motivo não é óbvio: um 400 que já tivesse aplicado dois dos quatro campos deixa a planta rodando uma configuração que operador nenhum escolheu, e a página exibe como se alguém tivesse querido. Validar-antes-de-mutar hoje é verdade só pela ordem das linhas — a asserção transforma isso em propriedade.
+`error_message_lists_every_offender` fixa a **ordem** (`body.index('sleep_min') < body.index('max_acq')`), não só a presença. Os testes de mensagem também afirmam que campos **válidos não aparecem** — sem isso, uma implementação que despeja os quatro nomes em qualquer erro passaria.
+
+**OTA na interface (13 casos)** — `shows_ota_disarmed_by_default` | `shows_armed_badge_before_any_connection` | `armed_page_differs_from_disarmed` | `post_ota_arms` | `post_ota_disarms` | `post_ota_rejects_invalid_value` | `post_ota_rejects_missing_value` | `post_ota_does_not_change_config` | `post_config_does_not_change_ota` | `post_ota_on_a_fresh_server_renders_with_empty_history` | `history_marks_the_entry_that_took_the_ota` | `history_does_not_mark_a_normal_entry` | `history_empty_row_spans_every_column`.
+
+- `armed_page_differs_from_disarmed` renderiza as duas e afirma que os corpos **diferem**: é a exigência "armado não pode parecer desarmado" como propriedade, não como busca de string, então continua valendo quando o markup mudar.
+- `post_ota_does_not_change_config` afirma **303** além da config intocada — sem o status, passaria no 404 de uma rota inexistente.
+- Os testes de histórico ancoram em `<tr class="ota-row">` e `class="ota-badge"` (forma de atributo), **não** na substring nua do nome da classe: a folha de estilo define `.ota-row` em toda página, armada ou não, então a forma nua passaria a valer sempre. Ancorar na linha renderizada é estritamente mais forte.
+- `'>OTA<'` em vez de `'OTA'`: a segunda casaria também com o botão `ARMAR OTA` e passaria numa página sem coluna de histórico nenhuma.
+
+**Total: 110 casos.**
 
 ---
 
-## 5. Ordem de implementação sugerida
+## 5. Ordem em que foi implementado
 
-1. `test_packet.py` + `packet.py` (10 B, ordem dos campos) — muda o contrato de fio, é o que gomi precisa espelhar em C **primeiro**.
-2. `AppState.take_config_for_send` / `rearm_ota` / `ota_sent`.
-3. `handle_client`: envio do `update` + `rearm` na falha + `ConnectionEntry.ota_sent`.
-4. Correções B1/B2/B3/B4/B8 via `recv_exact` (bloco isolado, testável sem tocar no OTA).
-5. Flask + template (checkbox, badge, coluna OTA).
-6. B5/B6/B7/B9 (limpeza), conforme a resposta da Q1.
-7. README do backend: seção "OTA" + procedimento de campo do §3.4.
+Cada passo: teste vermelho, saída bruta conferida pelo lead, mínimo para o verde, commit. Um commit por passo, para o `git log` contar a história e não o resultado.
+
+| Passo | O que entrou | Commit |
+|---|---|---|
+| 1 | `test_packet.py` + `packet.py`/`settings.py` — 10 B, ordem dos campos, header CSV revertido (DEC-3) | `041880c` |
+| 2 | `AppState`: `ota_armed`, `set_ota_armed`, `take_config_for_send`, `rearm_ota`, `ConnectionEntry.ota_sent` | `35fbca1` |
+| S1 | `recv_exact` sozinho — B3 (o laço que girava em `b''`) em commit próprio | `f6af0a3` |
+| S2 | `handle_client` lendo por quantidades exatas — B1, B2, B4, B8 | `670112e` |
+| S2b | `writer.writerow(CSV_COLUMNS)` — regressão do header CSV introduzida no passo 1 | `3b97f13` |
+| S3 | OTA no fio: claim, `rearm` no envio falho, `ota_sent`, B7 | `c20549c` |
+| S4a | B6 — falha de cópia para o Drive deixa de ser reportada como perda de dados | `15f0e1b` |
+| S4b | Validação por campo + limite `UINT16_MAX` | `066f76f` |
+| B9 | Imports e constantes mortos (`BUFFER_SIZE`, `RESPONSE_TIMEOUT_SEC`, dois imports) | `42365f1` |
+| S5 | `POST /ota`, botões, badge, coluna OTA no histórico | `76f83fe` |
+
+Pendente: seção "OTA" no `backend/README.md` com o procedimento de campo do §3.4.
+
+### 5.1 Mutação de verificação
+
+Depois do S5, com a suíte em 110 verdes, apagou-se a linha `self.ota_armed = False` de `take_config_for_send` — o claim para de limpar e o one-shot vira **sticky global** em silêncio, que é o que a D3 proíbe e o que colocaria todos os devices da correia em modo AP, um atrás do outro.
+
+Cinco algozes nomeados **antes** de rodar: `take_config_for_send_claims_once_then_clears`, `take_config_for_send_is_atomic_under_concurrency`, `rearm_ota_twice_does_not_double_arm`, `handle_client_clears_ota_after_send`, `handle_client_second_connection_gets_update_zero`.
+
+Resultado: `5 failed, 105 passed` — os cinco, exatamente, em dois módulos e nas duas camadas (a máquina de estados do armamento e a consequência dele no fio). Restaurado e reconferido em 110.
 
 ## 6. Perguntas ao lead antes de escrever código
 
@@ -447,3 +535,35 @@ O laço de recepção era gateado no global `running` (`while running: conn.recv
 Isso é deliberado, não esquecimento. Não havia comportamento bem definido a preservar: a versão de "abandonar" do servidor de produção era estourar `UnboundLocalError` no `finally` com `battery_voltage` não-vinculado e matar o worker. Restaurar o gate significaria **projetar** o que é um abandono limpo — decisão nova, sem teste por trás.
 
 Consequência que liga L1b a L1: o mesmo peer lento que segura um worker também **atrasa o desligamento**, porque o dreno das conexões em curso é limitado pelo mesmo timeout por `recv`. É a mesma propriedade vista de outro ângulo — a mitigação de L1 (deadline acumulado) fecha as duas.
+
+### L2 — Nada confirma que o device **agiu** sobre `update=1`
+
+Um `sendall` bem-sucedido prova que 10 bytes chegaram a um socket, e nada além disso. Se o device reiniciar ou falhar antes de o `Preferences.putBool` gravar, o armamento foi **gasto**, o histórico diz `OTA`, e nenhum AP aparece — a mesma falha de "operador caçando um AP fantasma" que o campo `ota_sent` foi criado para evitar, entrando por uma porta que não fechamos.
+
+**Hoje isso não é hipótese.** Verificado em 2026-07-27: `grep` por `update`, `Preferences`, `restart`, `softAP` e `WIFI_AP` em `src/` não retorna nada. O firmware refatorado recebe o campo e o guarda no struct, mas **nenhum código o lê**. Enquanto o lado embarcado não implementar a ação de OTA, armar pela interface é um no-op que consome o flag em silêncio. Não é defeito do backend — é as duas metades andando em ritmos diferentes —, mas se isso for demonstrado antes de o firmware chegar, vai parecer backend quebrado.
+
+Duas formas candidatas para quando for a hora (nenhuma projetada agora, ambas custam mudança de fio + handshake no firmware):
+- **armamento confirmado pelo device**: o device responde algo antes de reiniciar, e só então o servidor limpa;
+- **re-armar até ver o device em modo AP**: o flag persiste até uma evidência externa de que o AP subiu.
+
+### L3 — `maxlen=50` do histórico foi dimensionado antes da D1 — **escalado**
+
+`AppState.connections` é um `deque(maxlen=50)` escolhido quando um wake significava **uma** conexão. Pela D1 um wake é até `max_acq=5` aquisições, cada uma com sua conexão TCP e sua linha de histórico: cinco sensores dão ~25 linhas por rodada, então o buffer guarda cerca de duas rodadas. E a linha que sai primeiro, justamente quando a planta está mais movimentada, é o registro de OTA — o único rastro de qual sensor está prestes a sumir num AP.
+
+É número de produto, não decisão de engenharia: escalado ao lead/bigboss. `test_connections_max_50` fixa o 50, então mudar exige tocar num teste — de propósito.
+
+### L4 — `POST /ota` sem autenticação — **escalado**
+
+A interface web é **nova** no refactor: produção não tinha UI nenhuma no servidor, então a DEC-0 não dá cobertura aqui. O Flask sobe em `0.0.0.0` sem autenticação, e `POST /ota` faz um sensor reiniciar em Access Point aberto com senha fixa (`12345678`) servindo um endpoint de upload de firmware.
+
+A cadeia completa — "estar no WiFi da planta" → "firmware arbitrário num device" — não existia antes desta rodada. Pode ser perfeitamente aceitável numa VLAN isolada, e é exatamente por isso que precisa ser **decisão de alguém**, não um default que ninguém notou.
+
+### L5 — Nome do arquivo CSV vem do IP do peer
+
+`{ip}_{timestamp}.csv`. Um peer IPv6 produz dois-pontos no nome, o que quebra a cópia via gvfs e qualquer manipulação do lado Windows. Mesma forma do servidor de produção — DEC-0 manda deixar como está; registrado para não ser redescoberto.
+
+### L6 — Um único teste fixa os tamanhos pedidos ao socket
+
+Praticamente toda a suíte de `handle_client` é **insensível** ao número de bytes que o `recv_exact` pede, porque `MagicMock` ignora o argumento e devolve o próximo item do `side_effect` independentemente do que se peça. A única coisa segurando essa propriedade é `test_recv_exact_requests_only_the_missing_bytes`.
+
+Apague esse teste numa faxina e um `recv_exact` pedindo a quantidade errada passa nos 110. Não é buraco hoje, é ponto único de falha na cobertura — e há um comentário `DO NOT REMOVE` no próprio teste apontando para cá. Ponto único documentado é bicho diferente de ponto único despercebido.
