@@ -478,6 +478,30 @@ It also generalises past greps to every measurement in this document — the cla
 drift, the moving tree, the declaration count read as an outcome. In each case the
 technical fix helped and the reporting discipline is what held.
 
+#### A threshold derived from the data must exclude what it exists to detect
+
+From the CSV gap check (S1): the tool compares each timestamp delta against a **median**
+of the deltas. A single backwards jump — a `millis()` wrap is ~4.29 × 10⁹ ms — drags the
+median it is being measured against, so the check degrades **exactly on the input it
+exists for**. The fix is a forward-only median: compute the reference from the class of
+values you are *not* hunting.
+
+The general form is worth more than the instance:
+
+> **Any threshold computed from the data must exclude the class of value it is meant to
+> detect**, or the outlier defines its own tolerance.
+
+Same family as a check that cannot fail — the failure is invisible on ordinary input and
+appears only when the check finally matters.
+
+**And the honest boundary of that work, which its commit message states:** the harness was
+the deliverable and the gap check is its first test, so **the check became testable, not
+the tool.** The two defects found in that file that day — an interpolation of a constant
+defined below its use, and a doubled brace rendering literally — were found by **reading**,
+both sit in the branch that only runs when the tool has something important to say, and
+neither is reachable by any test added. A deliverable that describes its own boundary is
+worth more than one that implies it covered more than it did.
+
 Two things follow. The mistake is not about carelessness with lines of code: it is
 categorising by resemblance, and it operates on strategies and predictions as readily
 as on `grep` patterns. And it is the strongest evidence in this document for the
