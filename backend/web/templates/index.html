@@ -55,6 +55,7 @@
     button.secondary:hover { background: #16487f; }
     .ota-row td { background: #2b1220; border-left: 3px solid #e94560; }
     .ota-row:hover td { background: #4a1626; }
+    .ota-last { color: #888; font-size: 0.75rem; margin-top: 10px; }
     .ota-badge {
       background: #e94560; color: #fff; padding: 2px 7px;
       border-radius: 3px; font-size: 0.72rem; letter-spacing: 1px;
@@ -101,6 +102,9 @@
             <input type="hidden" name="armed" value="1">
             <button type="submit">ARMAR OTA</button>
           </form>
+        {% endif %}
+        {% if last_ota %}
+          <div class="ota-last">Ultimo OTA enviado: {{ last_ota.ip }} as {{ last_ota.timestamp.strftime('%d/%m %H:%M') }}</div>
         {% endif %}
       </div>
     </div>

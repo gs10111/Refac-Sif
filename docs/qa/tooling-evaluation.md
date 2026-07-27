@@ -34,6 +34,47 @@ cd backend && ./.venv/bin/python -m pytest tests/ -q     # 111 passed in 0.75s (
   --disable-mutation-types=string
 ```
 
+### Two ways this run lies to you
+
+Both were caught before they produced a wrong answer. Both belong in the invocation
+notes, because both produce output that looks entirely plausible.
+
+**1. A red baseline turns every mutant into a kill.** The runner is `pytest -x`, which
+stops at the first failure — correct and fast for mutation testing, because one failing
+test is all it takes to call a mutant dead. But if the suite is *already* red, every
+mutant run dies on the pre-existing failure and **every mutant is scored killed**. The
+report comes back showing survivors collapsing to near zero, which reads as spectacular
+progress and is in fact the baseline being broken. sama caught this on my command while
+four Q3 tests were deliberately red mid-TDD.
+
+**mutmut 2.5.1 refuses on a red baseline — verified, not assumed.** lave ran it against
+the red tree before the warning arrived: it checked the baseline, reported
+`1 failed, 109 passed`, and bailed. No mutants were scored, no report was produced,
+nothing was written. So the collapse-to-near-zero scenario cannot happen with this tool
+as invoked. We know that because it happened, not because the docs say so.
+
+Keep the guard below anyway. Not out of distrust of a property we have now watched
+fire, but because it is one line, it makes the refusal legible to whoever reads the log
+six months from now, and it survives a changed runner or a version bump — the guard
+holds even when the assumption it protects stops being true:
+
+```
+cd backend && ./.venv/bin/python -m pytest -q tests/ 2>&1 | tail -3
+# ONLY if that reports N passed, 0 failed:
+rm -f .mutmut-cache && ./.venv/bin/mutmut run ...
+```
+
+**2. Mutant IDs are not stable.** mutmut numbers mutants in discovery order over the
+source, so any edit above a mutant renumbers everything after it. "Mutant #94 is now
+killed" is a claim about a *label*, and the label moves. **Verify survivors by content,
+never by id** — `mutmut show all` prints the diff for every surviving mutant, so the
+question "is the `saved = False → True` mutation still alive" is answered by searching
+the diffs, not by looking up a number.
+
+The same reasoning as the firmware harness's rule about naming which tests must die
+rather than predicting a count: an identifier that can silently come to mean something
+else is not a self-check.
+
 ### Version: 2.5.1, pinned, and this is a real cost
 
 `pip install mutmut` resolves **3.6.0, which does not work for this layout**. 3.x
@@ -87,11 +128,23 @@ count drops 92 → 69 and every remaining row is at least arguable.
 
 **Survivor #94 — `saved = False` → `saved = True` in `save_data`, survived.**
 
-This is the find, and it is worth the whole exercise. It means **no test covers "the
-local CSV write failed, so do not attempt the Drive copy"** — the `if saved` guard
-from the B6 fix, shipped today, with its failure path untested. All three B6 tests
-take the path where the write succeeded. A five-minute test for sama, and worth more
-than the other 68 put together.
+This is the find, and it is worth the whole exercise. It meant **no test covered "the
+local CSV write failed, so do not attempt the Drive copy"** — the `if saved` guard at
+`server/tcp_server.py:65,71,80`, from the B6 fix, shipped that day with its failure
+path untested. Every other B6 test took the write-succeeded path.
+
+**Closed within the hour.** sama added
+`test_save_data_does_not_copy_to_drive_when_the_local_write_fails`
+(`tests/test_tcp_server.py:566`), which raises `OSError` from a module-scoped `open`
+shadow and asserts `subprocess.run` is never called. Its docstring names the gap
+itself: *"This test is the only thing covering that branch — every other B6 test takes
+the write-succeeded path."*
+
+That is the whole value cycle in one afternoon: **a tool found a hole in code shipped
+the same day, a human wrote the test, and the next run should report that mutant
+killed.** Confirming it is killed is the outstanding step — and it is the honest
+acceptance test for adopting mutmut at all, because a mutation tool whose findings do
+not verifiably close is a report generator.
 
 **Timeout #89 — `break` → `continue` on the `None` sentinel in `save_data`.**
 

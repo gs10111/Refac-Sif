@@ -171,6 +171,13 @@ def handle_client(conn, addr, state: AppState):
         # operation. The response is built from that snapshot and never from a
         # second read of state.config: a POST /config landing in between would
         # otherwise ship a config no operator ever paired with this arming.
+        #
+        # CROSS-HALF INVARIANT — no response may be sent without going through
+        # this claim. The firmware relies on every config frame carrying a
+        # truthful `update`: a 0 it did not earn is read as a disarm and wipes a
+        # flag the operator set. Paths that abort before here send nothing at
+        # all, which is always safe. Adding a path that answers the device
+        # without claiming would break the device, not the server.
         config, ota = state.take_config_for_send()
         response = pack_server_config(
             config.sleep_min, config.idle_min,

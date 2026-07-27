@@ -313,15 +313,59 @@ def test_post_ota_on_a_fresh_server_renders_with_empty_history(client):
 # History: which device took the flag, readable at a glance.
 # --------------------------------------------------------------------------
 
-def add_entry(state, ip='192.168.1.5', ota_sent=False):
+def add_entry(state, ip='192.168.1.5', ota_sent=False, minute=0):
     with state.lock:
         state.connections.append(ConnectionEntry(
             ip=ip,
-            timestamp=datetime.datetime(2026, 5, 20, 14, 0, 0),
+            timestamp=datetime.datetime(2026, 5, 20, 14, minute, 0),
             n_samples=100,
             battery_mv=3750,
             ota_sent=ota_sent,
         ))
+
+
+def test_index_shows_the_last_device_that_took_the_ota(client):
+    """"Which sensor did I just send into AP mode" is the question the operator
+    has while standing there. Pure render over the history — no inference."""
+    c, state = client
+    add_entry(state, ip='192.168.1.7', ota_sent=True, minute=3)
+
+    body = c.get('/').data.decode()
+
+    assert 'Ultimo OTA enviado: 192.168.1.7' in body
+    assert '20/05 14:03' in body
+
+
+def test_index_shows_no_last_ota_when_none_was_ever_sent(client):
+    c, state = client
+    add_entry(state, ip='192.168.1.5', ota_sent=False)
+
+    body = c.get('/').data.decode()
+
+    assert 'Ultimo OTA enviado' not in body
+
+
+def test_index_shows_the_most_recent_ota_when_several(client):
+    c, state = client
+    add_entry(state, ip='192.168.1.5', ota_sent=True, minute=1)
+    add_entry(state, ip='192.168.1.9', ota_sent=True, minute=5)
+
+    body = c.get('/').data.decode()
+
+    # Anchored on the full line: both IPs appear in the history table below.
+    assert 'Ultimo OTA enviado: 192.168.1.9' in body
+    assert 'Ultimo OTA enviado: 192.168.1.5' not in body
+
+
+def test_index_last_ota_survives_later_normal_connections(client):
+    """It is the last connection that TOOK the flag, not the last connection."""
+    c, state = client
+    add_entry(state, ip='192.168.1.7', ota_sent=True, minute=3)
+    add_entry(state, ip='192.168.1.8', ota_sent=False, minute=9)
+
+    body = c.get('/').data.decode()
+
+    assert 'Ultimo OTA enviado: 192.168.1.7' in body
 
 
 def test_history_marks_the_entry_that_took_the_ota(client):

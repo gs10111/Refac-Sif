@@ -50,9 +50,16 @@ def create_app(state: AppState) -> Flask:
             config      = dataclasses.replace(state.config)
             connections = list(state.connections)
             ota_armed   = state.ota_armed
+        # Which device took the flag last, derived from the history already
+        # copied — no new state. It does NOT say whether that device came back:
+        # the only key we have is a DHCP address, so a device returning on a new
+        # lease reads as a different one and a reused address as the same one.
+        # An inference that fails exactly when the network is unusual is worse
+        # than none, because it would be believed.
+        last_ota = next((e for e in reversed(connections) if e.ota_sent), None)
         page = make_response(render_template(
             'index.html', config=config, connections=connections,
-            ota_armed=ota_armed,
+            ota_armed=ota_armed, last_ota=last_ota,
         ))
         # The page is the operator's only instrument: a cached render showing
         # a stale arming state is worse than no page at all.

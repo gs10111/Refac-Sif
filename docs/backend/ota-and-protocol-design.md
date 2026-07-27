@@ -285,6 +285,60 @@ Validação do formulário de config (`validate_config_form`), rescrita na mesma
 | novo | backend novo | **OK.** Contrato desta rodada. |
 | novo | `pyFiles/server_lix_csv2.py` | **QUEBRADO.** Esse servidor responde 8 bytes; o firmware espera 10, desiste após 5 s e fica **sem config nenhuma**, mantendo os defaults em silêncio. Device parece saudável e ignora toda mudança de configuração para sempre. |
 
+### 2.10 Cláusulas de contrato — assinadas em 2026-07-27
+
+Saíram da leitura conjunta entre as duas metades. Nenhuma muda o layout: continuam 10 bytes, `update` no offset 8. Duas mudam **o que um valor significa**, e uma registra uma propriedade que emergiu das duas metades juntas.
+
+#### Cláusula 1 — `update = 0` é uma instrução de **desarme** no device
+
+Ao receber uma config com `update == 0`, se o flag persistido estiver ligado, o device o **apaga**. Lê antes de escrever: uma gravação em NVS na transição, nenhuma em regime.
+
+Isto é **desvio deliberado do original**, onde `main.cpp:282` age em `if (response.update)` sem `else` e o 0 é silêncio. A justificativa não é "é melhor": é que já aceitamos um desvio que **cria** o problema que este resolve. Manter o flag ligado quando o Access Point falha a subir é escolha nossa — o original sempre limpa no boot e por isso não tem caso de flag latente. Tendo criado a trava, devemos a ela um limite.
+
+Limite melhor que o contador descartado: contador para de tentar e deixa um device que nunca atualiza; o desarme devolve o device a um estado conhecido na próxima transmissão comum.
+
+**O backend não muda nada.** Já envia `update=0` em toda conexão que não vence o claim.
+
+> **Isto não é auto-cura, e a frase importa.** A intenção do operador é **descartada**, não atendida. "Qualquer transmissão normal limpa um flag preso" soa como pedido honrado — não é: é pedido **perdido**, só que perdido melhor. Perdido pronta e visivelmente, com o operador ainda na mesa, em vez de latente e horas depois. Ninguém deve ler o desarme como garantia de entrega.
+
+#### Cláusula 2 — o device **não pode transmitir** entre receber `update=1` e entrar no boot de OTA
+
+Vira **requisito** do contrato, e não mais efeito colateral aceito da D3.
+
+Sob a cláusula 1, uma transmissão nesse intervalo colhe `update=0` e **desarma o flag que o device acabou de receber**. O OTA nunca aconteceria, e o sintoma apareceria no backend parecendo bug de servidor.
+
+Hoje vale porque o original reinicia imediatamente após persistir (`main.cpp:284-288`). O abandono das aquisições restantes daquele wake **era** efeito colateral e **passou a ser** requisito — e essa mudança de status é o ponto todo: efeito colateral pode ser otimizado por quem nunca soube que ele sustentava algo. Um refactor "termina o ciclo antes de reiniciar, fica mais limpo" quebra isto em silêncio. Defesa: `T21b` (`test_a_pending_update_restarts_before_any_further_acquisition`), na precedência do `belt_next` — a adjacência persist/restart é estrutural e não testável, a precedência é testável e é a metade que um refactor reescreve.
+
+#### Cláusula 3 — o cliente aplica a config **tudo-ou-nada**
+
+> Um frame menor que `SERVER_CONFIG_WIRE_BYTES` não altera **campo nenhum**.
+
+`packet.cpp` rejeita por comprimento **antes** de ler qualquer campo, e `update` só é consultado quando o parse teve sucesso. Fixado por `test_config_is_applied_only_when_ten_bytes_arrive` (T46), que roteia uma resposta de 9 bytes e exige os cinco campos inalterados.
+
+**Correção registrada:** esta cláusula foi assinada primeiro com a justificativa errada — a de que a proteção vinha de `update` ser o **último** campo, e portanto de o offset 8 ser intocável. Não é. A proteção é o parse tudo-ou-nada; mover o campo para o offset 0 não muda nada, porque um prefixo de 2 bytes com `update=1` é rejeitado inteiro. A versão errada era pior que errada de duas formas ao mesmo tempo: restringia o layout à toa **e** deixava a invariante real desprotegida — um cliente futuro que aplicasse campos conforme chegam recriaria o problema em qualquer offset, com todo mundo atrás de uma regra sobre ordem de campo que não protegia nada. `update` fica no offset 8 pelo motivo que sempre teve: compatibilidade de fio com o `win_server.py`. É suficiente e não precisa de restrição adicional.
+
+#### Consequência das três: um armamento nunca fica nos dois lados
+
+Direção do raciocínio, e vale como propriedade de segurança entre as metades:
+
+> device vê `update=1` ⇒ chegou um frame **completo** ⇒ o `sendall` **não** levantou ⇒ o backend **limpou** em vez de re-armar.
+
+Logo **uma conexão nunca deixa o flag no device E de volta no servidor**. Consequência da regra tudo-ou-nada da cláusula 3, não do offset do campo.
+
+Do lado do backend a implicação depende de um fato do `sendall`, confirmado: ele faz laço sobre `send()` e retorna assim que o kernel aceita o resto, sem verificação posterior. Se levanta, ao menos um byte foi recusado; se retorna, os dez foram aceitos. Falha de TCP posterior só apareceria num `send` seguinte, e não existe `send` seguinte — `handle_client` envia uma vez e cai no `conn.close()` do `finally`.
+
+Note o que a propriedade **não** diz: "kernel aceitou dez bytes" não é "device recebeu dez bytes". Por isso ela é *o device não consegue se armar a partir de um envio que o backend considera falho*, e **não** *o device se armou sempre que o backend considera enviado*. Este segundo caso é a terceira saída da L2, e continua aberto.
+
+#### Dependência estreita do firmware — registrada como assimetria
+
+O firmware exige apenas: **uma resposta, se chegar, carrega um `update` verdadeiro.** Não exige que uma resposta sempre chegue.
+
+A garantia do backend é mais forte: `handle_client` responde em toda transmissão completa, e `update` é `int(ota)` vindo do claim. Os caminhos sem resposta são quatro — timeout/`ConnectionError` no header, header acima de `MAX_PAYLOAD_BYTES`, payload truncado, exceção inesperada antes do claim — e em todos **o claim nunca acontece**, então nenhum armamento é gasto e o flag do device fica como estava.
+
+Garantia mais forte que a dependência significa que um enfraquecimento futuro do lado do backend **atrasa** um desarme em vez de corromper um. O que quebraria o firmware é um **quinto caminho que responda sem passar pelo claim** — daí o comentário `CROSS-HALF INVARIANT` no ponto do claim em `handle_client`: o estrago cairia na outra metade, e nenhum teste do backend pegaria.
+
+---
+
 #### Patch sugerido para `server_lix_csv2.py` — para o bigboss aplicar
 
 > **Não aplicado por nós, e não testado por nós.** O arquivo vive em **outro repositório** (`SIF-DI241794-...`, privado) que está **em produção**. Ninguém deste time tocou nele. Não temos como executá-lo aqui: o texto abaixo foi derivado por leitura, comparando-o com `win_server.py`, que já emite os 10 bytes corretos.
