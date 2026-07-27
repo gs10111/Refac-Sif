@@ -4,7 +4,7 @@
 #include "Arduino.h"
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
-#include "config/server_config.cpp"
+#include "config/network_config.h"
 
 // Survives a deep-sleep wake; reloaded from flash on every other reset, which is
 // why BELT_INITIAL_STAGE has to be the safe state rather than a resume point.

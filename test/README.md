@@ -114,7 +114,9 @@ whichever way the declaration goes, which is worse than admitting the gap. Use a
 grep, and keep it here where it will be run.
 
 ```
-grep -c 'RTC_DATA_ATTR' src/app/app.cpp        # must be exactly 1
+grep -c 'RTC_DATA_ATTR' src/app/app.cpp                    # must be exactly 1
+grep -rn 'your_ssid\|your_password' src include lib       # must return nothing
+git check-ignore include/secrets.h                         # must succeed
 ```
 
 Only the belt stage belongs in RTC memory. The server config must NOT: production
@@ -122,6 +124,12 @@ holds it in an ordinary member (`ICM42688P.h:257-264`), so a timer wake starts f
 the compiled defaults and the server re-states it on the next transmission. A device
 handed a bad `sleep_min` then self-heals on its next wake, where persisting it would
 put a device that took `sleep_min = 1440` permanently out of reach of the fix.
+
+The credential checks guard DEC-2. This repository is public; the real SSID and
+password live only in `include/secrets.h`, which is git-ignored, and a build without
+it fails with an `#error` rather than compiling a placeholder. The placeholder is
+the failure being prevented: it builds, links, flashes and boots, and produces a
+device that acquires perfectly and can never reach the server.
 
 Two other guarantees are currently structural rather than tested, both because the
 cycle lives in Arduino code a host build cannot reach. Round 9's extraction is where
