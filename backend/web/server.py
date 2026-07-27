@@ -1,7 +1,44 @@
 import dataclasses
-from flask import Flask, render_template, request, redirect
+from flask import (
+    Flask, Response, make_response, render_template, request, redirect,
+)
 
 from app_state import AppState
+from protocol.packet import UINT16_MAX
+
+# Fixed order — the error message lists offenders in form order, never in dict
+# iteration order, so the same bad input always produces the same message.
+FORM_FIELDS = ['sleep_min', 'idle_min', 'max_acq', 'cooldown_sec']
+
+
+def validate_config_form(form) -> tuple[dict, list]:
+    """Validate all four config fields, returning (values, errors).
+
+    Every offender is reported, one line per field, each naming the field and
+    the reason: the operator is at a laptop in a plant, and a second rejection
+    after fixing the first one reads as a broken form.
+    """
+    values, errors = {}, []
+    for field in FORM_FIELDS:
+        raw = form.get(field)
+        if raw is None:
+            errors.append(f'{field}: campo ausente.')
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            errors.append(f'{field}: "{raw}" nao e um numero inteiro.')
+            continue
+        if value <= 0:
+            errors.append(f'{field}: deve ser maior que zero.')
+        elif value > UINT16_MAX:
+            errors.append(
+                f'{field}: {value} nao cabe no campo do protocolo '
+                f'(maximo {UINT16_MAX}).'
+            )
+        else:
+            values[field] = value
+    return values, errors
 
 
 def create_app(state: AppState) -> Flask:
@@ -10,28 +47,54 @@ def create_app(state: AppState) -> Flask:
     @app.route('/')
     def index():
         with state.lock:
-            config = dataclasses.replace(state.config)
+            config      = dataclasses.replace(state.config)
             connections = list(state.connections)
-        return render_template('index.html', config=config, connections=connections)
+            ota_armed   = state.ota_armed
+        # Which device took the flag last, derived from the history already
+        # copied — no new state. It does NOT say whether that device came back:
+        # the only key we have is a DHCP address, so a device returning on a new
+        # lease reads as a different one and a reused address as the same one.
+        # An inference that fails exactly when the network is unusual is worse
+        # than none, because it would be believed.
+        last_ota = next((e for e in reversed(connections) if e.ota_sent), None)
+        page = make_response(render_template(
+            'index.html', config=config, connections=connections,
+            ota_armed=ota_armed, last_ota=last_ota,
+        ))
+        # The page is the operator's only instrument: a cached render showing
+        # a stale arming state is worse than no page at all.
+        page.headers['Cache-Control'] = 'no-store'
+        return page
+
+    @app.route('/ota', methods=['POST'])
+    def update_ota():
+        """Arm or disarm the one-shot OTA flag — separate from the config form
+        so saving an unrelated field can never arm or disarm a device."""
+        armed = request.form.get('armed')
+        if armed not in ('0', '1'):
+            reason = ('armed: campo ausente.' if armed is None
+                      else f'armed: "{armed}" nao e um valor valido.')
+            return Response(
+                f'{reason} Use 1 para armar o OTA ou 0 para desarmar.',
+                status=400, mimetype='text/plain',
+            )
+
+        state.set_ota_armed(armed == '1')
+        return redirect('/', 303)
 
     @app.route('/config', methods=['POST'])
     def update_config():
-        try:
-            sleep_min    = int(request.form['sleep_min'])
-            idle_min     = int(request.form['idle_min'])
-            max_acq      = int(request.form['max_acq'])
-            cooldown_sec = int(request.form['cooldown_sec'])
-        except (KeyError, ValueError):
-            return 'Valores invalidos: todos os campos devem ser inteiros.', 400
-
-        if any(v <= 0 for v in [sleep_min, idle_min, max_acq, cooldown_sec]):
-            return 'Valores invalidos: todos os campos devem ser maiores que zero.', 400
+        values, errors = validate_config_form(request.form)
+        if errors:
+            # Nothing is written when anything is wrong: a partially applied
+            # config is one no operator ever chose, shown as if they had.
+            return Response('\n'.join(errors), status=400, mimetype='text/plain')
 
         with state.lock:
-            state.config.sleep_min    = sleep_min
-            state.config.idle_min     = idle_min
-            state.config.max_acq      = max_acq
-            state.config.cooldown_sec = cooldown_sec
+            state.config.sleep_min    = values['sleep_min']
+            state.config.idle_min     = values['idle_min']
+            state.config.max_acq      = values['max_acq']
+            state.config.cooldown_sec = values['cooldown_sec']
 
         return redirect('/', 303)
 

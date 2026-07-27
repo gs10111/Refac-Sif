@@ -3,8 +3,13 @@
 
 #define SPI_READ 0x80
 #define SPI_CLOCK 1000000 // 1 MHz — see known issue: max is 24 MHz
-ICM42688P::ICM42688P(SPIClass &spi, int8_t cs_pin)
-    : _spi(&spi), _cs_pin(cs_pin) {}
+ICM42688P::ICM42688P(SPIClass &spi, int8_t cs_pin, AccelRange range, OdrFreq odr)
+    : _spi(&spi), _cs_pin(cs_pin), _range(range), _odr(odr) {}
+
+void ICM42688P::wake()
+{
+    wakeup(_range, _odr);
+}
 bool ICM42688P::begin(int8_t sck, int8_t miso, int8_t mosi)
 {
     _spi->begin(sck, miso, mosi, _cs_pin);
@@ -64,47 +69,35 @@ void ICM42688P::sleep()
     delay(10);
     spi_write(PWR_MGMT0_REG, &pwrMgmt0, 1);
 }
-IIMStatus ICM42688P::sampleOnceMEMS3Dbyte(uint8_t *buf, uint32_t bufferSize)
+// Fills the 14 sensor bytes of a wire frame and returns. No storage, no
+// timestamp, no modulo arithmetic — those moved to RingBuffer and
+// AcquisitionService, where a host build can reach them. The byte order below is
+// the wire order and matches production (ICM42688P.cpp:383-425 in the original):
+// low byte then high byte, accel then gyro, X then Y then Z, temperature last.
+ImuStatus ICM42688P::readSensorFrame(uint8_t *out)
 {
     uint8_t intStatus = 0;
     spi_read(INT_STATUS_REG, &intStatus, 1);
 
     if (!(intStatus & DATA_RDY_INT_MASK))
-        return IIM_NOT_READY;
+        return IMU_NOT_READY;
 
-    uint8_t raw[14];
-    spi_read(ACCEL_DATA_X0_REG, &raw[0], 1);
-    spi_read(ACCEL_DATA_X1_REG, &raw[1], 1);
-    spi_read(GYRO_DATA_X0_REG, &raw[2], 1);
-    spi_read(GYRO_DATA_X1_REG, &raw[3], 1);
-    spi_read(ACCEL_DATA_Y0_REG, &raw[4], 1);
-    spi_read(ACCEL_DATA_Y1_REG, &raw[5], 1);
-    spi_read(GYRO_DATA_Y0_REG, &raw[6], 1);
-    spi_read(GYRO_DATA_Y1_REG, &raw[7], 1);
-    spi_read(ACCEL_DATA_Z0_REG, &raw[8], 1);
-    spi_read(ACCEL_DATA_Z1_REG, &raw[9], 1);
-    spi_read(GYRO_DATA_Z0_REG, &raw[10], 1);
-    spi_read(GYRO_DATA_Z1_REG, &raw[11], 1);
-    spi_read(TEMP_DATA0_REG, &raw[12], 1);
-    spi_read(TEMP_DATA1_REG, &raw[13], 1);
-    
-    uint32_t timestamp = millis();
-    uint8_t *ts = (uint8_t *)&timestamp;
-    for (int i = 0; i < 4; i++)
-    {
-        buf[head] = ts[i];
-        head = (head + 1) % bufferSize;
-    }
-    for (int i = 0; i < 14; i++)
-    {
-        buf[head] = raw[i];
-        head = (head + 1) % bufferSize;
-    }
+    spi_read(ACCEL_DATA_X0_REG, &out[0], 1);
+    spi_read(ACCEL_DATA_X1_REG, &out[1], 1);
+    spi_read(GYRO_DATA_X0_REG, &out[2], 1);
+    spi_read(GYRO_DATA_X1_REG, &out[3], 1);
+    spi_read(ACCEL_DATA_Y0_REG, &out[4], 1);
+    spi_read(ACCEL_DATA_Y1_REG, &out[5], 1);
+    spi_read(GYRO_DATA_Y0_REG, &out[6], 1);
+    spi_read(GYRO_DATA_Y1_REG, &out[7], 1);
+    spi_read(ACCEL_DATA_Z0_REG, &out[8], 1);
+    spi_read(ACCEL_DATA_Z1_REG, &out[9], 1);
+    spi_read(GYRO_DATA_Z0_REG, &out[10], 1);
+    spi_read(GYRO_DATA_Z1_REG, &out[11], 1);
+    spi_read(TEMP_DATA0_REG, &out[12], 1);
+    spi_read(TEMP_DATA1_REG, &out[13], 1);
 
-    if (head == tail)
-        tail = (tail + 18) % bufferSize;
-
-    return IIM_OK;
+    return IMU_OK;
 }
 int16_t ICM42688P::readTemperature()
 {
@@ -114,11 +107,6 @@ int16_t ICM42688P::readTemperature()
     return (int16_t)((h << 8) | l);
 }
 
-void ICM42688P::reset()
-{
-    head = 0;
-    tail = 0;
-}
 void ICM42688P::spi_write(uint8_t reg, const uint8_t *data, uint32_t len)
 {
     _spi->beginTransaction(SPISettings(SPI_CLOCK, MSBFIRST, SPI_MODE0));

@@ -75,11 +75,43 @@ Edite os 4 parâmetros e clique **SALVAR**. O ESP32 receberá os novos valores n
 | Max Acq | Máximo de aquisições antes de dormir | 5 |
 | Cooldown (s) | Intervalo mínimo entre triggers | 5 |
 
+Os quatro são inteiros de 1 a 65535 — é a largura do campo no protocolo, não uma escolha nossa. Valor recusado devolve uma mensagem por campo dizendo qual é e por quê, e **nenhum** valor é gravado enquanto houver um errado.
+
+O bloco **Atualizacao OTA**, logo abaixo, é independente do SALVAR: salvar a configuração nunca arma nem desarma o OTA. Ver a seção adiante.
+
 **Painel direito — Últimas Conexões**
 
-Exibe as últimas 50 conexões dos dispositivos: IP, horário, número de amostras e tensão da bateria.
+Exibe as últimas 500 conexões dos dispositivos: IP, horário, número de amostras, tensão da bateria e se aquela conexão levou o comando de OTA.
 
-> **Nota:** a configuração é mantida em memória. Se o servidor reiniciar, os valores voltam ao padrão.
+A linha que levou o OTA fica destacada (fundo avermelhado, borda à esquerda) e recebe o selo **OTA**. É o único registro de qual sensor está prestes a reiniciar em modo Access Point — vale anotar o IP antes de sair da mesa.
+
+> **Nota:** a configuração é mantida em memória. Se o servidor reiniciar, os valores voltam ao padrão e o OTA volta desarmado.
+
+---
+
+## Atualização de firmware pelo ar (OTA)
+
+O painel esquerdo tem o bloco **Atualizacao OTA**, com dois estados:
+
+| Estado | O que a página mostra | Botão |
+|---|---|---|
+| desarmado | `OTA desarmado` | **ARMAR OTA** |
+| armado | `OTA ARMADO — proximo device que transmitir`, em vermelho | **DESARMAR** |
+
+O armamento é **de uso único**: o comando vai para o **próximo** device que completar uma transmissão, e o servidor desarma sozinho em seguida. O device seguinte já recebe o comando normal. Não existe forma de escolher **qual** device recebe — quem transmitir primeiro leva.
+
+### Procedimento de campo
+
+1. Na rede da planta, abra `http://<servidor>:8080` e clique **ARMAR OTA**. Confirme que a faixa ficou vermelha.
+2. **Force uma transmissão no sensor que você quer atualizar**: passe o ímã. Sem isso a espera pode chegar ao tempo de sleep configurado (padrão 240 min), e nesse meio tempo qualquer outro sensor que transmitir leva o OTA no seu lugar. Este passo é o único controle sobre *qual* device é atualizado.
+3. O device transmite, recebe o comando e **reinicia como Access Point**: rede `Update driver - <MAC>`, senha `12345678`.
+4. Confira no histórico qual IP ficou com o selo **OTA** — é esse o device que saiu da rede.
+5. **Saia do WiFi da planta** e conecte o notebook nesse Access Point. Enquanto estiver nele, o servidor fica inacessível.
+6. Abra `http://192.168.4.1/` e envie o arquivo `.bin`. `/version` mostra a versão atual; `/restartESP` reinicia.
+7. **A janela é de 5 minutos.** Se estourar, o device reinicia sozinho no modo normal, **e o armamento já foi consumido** dos dois lados — é preciso voltar ao passo 1 e esperar a próxima transmissão.
+8. Volte o notebook para a rede da planta e confirme no histórico que o device voltou a transmitir.
+
+> **Atenção:** armar o OTA não exige senha nenhuma. Qualquer pessoa com acesso à rede do servidor pode fazê-lo. Ver `docs/backend/ota-and-protocol-design.md`, seção 7, L4.
 
 ---
 
@@ -109,7 +141,7 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-16 testes cobrindo: AppState, rotas Flask e protocolo TCP.
+111 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
 
 ---
 
