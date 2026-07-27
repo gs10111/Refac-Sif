@@ -196,6 +196,167 @@ def test_post_config_error_message_mentions_the_protocol_limit(client):
     assert 'idle_min' not in body
 
 
+# --------------------------------------------------------------------------
+# One-shot OTA arming (DEC-3/DEC-5). Separate route from the config form, and
+# the page must show the armed state BEFORE any device has connected.
+# --------------------------------------------------------------------------
+
+def test_get_index_shows_ota_disarmed_by_default(client):
+    c, _ = client
+
+    body = c.get('/').data.decode()
+
+    assert 'ARMAR OTA'  in body
+    assert 'OTA ARMADO' not in body
+
+
+def test_get_index_shows_armed_badge_before_any_connection(client):
+    """Arming is visible immediately — waiting for a device to prove it armed
+    is how an operator arms it twice or drives to the plant to check."""
+    c, state = client
+    state.set_ota_armed(True)
+
+    body = c.get('/').data.decode()
+
+    assert len(state.connections) == 0
+    assert 'OTA ARMADO' in body
+    assert 'DESARMAR'   in body
+
+
+def test_get_index_armed_page_differs_from_disarmed(client):
+    """The property behind the requirement: armed must not render identically
+    to disarmed, whatever the markup happens to be."""
+    c, state = client
+
+    disarmed = c.get('/').data
+    state.set_ota_armed(True)
+    armed    = c.get('/').data
+
+    assert armed != disarmed
+
+
+def test_post_ota_arms(client):
+    c, state = client
+
+    response = c.post('/ota', data={'armed': '1'})
+
+    assert response.status_code == 303
+    assert state.ota_armed is True
+
+
+def test_post_ota_disarms(client):
+    c, state = client
+    state.set_ota_armed(True)
+
+    response = c.post('/ota', data={'armed': '0'})
+
+    assert response.status_code == 303
+    assert state.ota_armed is False
+
+
+def test_post_ota_rejects_invalid_value(client):
+    c, state = client
+
+    response = c.post('/ota', data={'armed': 'maybe'})
+
+    assert response.status_code == 400
+    assert state.ota_armed is False
+
+
+def test_post_ota_rejects_missing_value(client):
+    c, state = client
+    state.set_ota_armed(True)
+
+    response = c.post('/ota', data={})
+
+    assert response.status_code == 400
+    assert state.ota_armed is True
+
+
+def test_post_ota_does_not_change_config(client):
+    """DEC-5: the two forms are independent."""
+    c, state = client
+    before = config_tuple(state)
+
+    response = c.post('/ota', data={'armed': '1'})
+
+    assert response.status_code == 303
+    assert config_tuple(state) == before
+
+
+def test_post_config_does_not_change_ota(client):
+    """DEC-5 from the other side: saving config must never disarm."""
+    c, state = client
+    state.set_ota_armed(True)
+
+    response = c.post('/config', data=form(sleep_min='120'))
+
+    assert response.status_code == 303
+    assert state.ota_armed is True
+
+
+def test_post_ota_on_a_fresh_server_renders_with_empty_history(client):
+    """Most likely first use of the whole feature: arm the flag on a server
+    that has never seen a device. The empty-history path must still render."""
+    c, state = client
+
+    assert c.post('/ota', data={'armed': '1'}).status_code == 303
+    response = c.get('/')
+    body = response.data.decode()
+
+    assert response.status_code == 200
+    assert len(state.connections) == 0
+    assert 'OTA ARMADO' in body
+
+
+# --------------------------------------------------------------------------
+# History: which device took the flag, readable at a glance.
+# --------------------------------------------------------------------------
+
+def add_entry(state, ip='192.168.1.5', ota_sent=False):
+    with state.lock:
+        state.connections.append(ConnectionEntry(
+            ip=ip,
+            timestamp=datetime.datetime(2026, 5, 20, 14, 0, 0),
+            n_samples=100,
+            battery_mv=3750,
+            ota_sent=ota_sent,
+        ))
+
+
+def test_history_marks_the_entry_that_took_the_ota(client):
+    """Row styling AND a text badge: colour alone fails a colour-blind operator
+    and a black-and-white print of the page."""
+    c, state = client
+    add_entry(state, ota_sent=True)
+
+    body = c.get('/').data.decode()
+
+    assert '<tr class="ota-row">' in body
+    assert 'class="ota-badge"'    in body
+    assert '>OTA<'                in body
+
+
+def test_history_does_not_mark_a_normal_entry(client):
+    c, state = client
+    add_entry(state, ota_sent=False)
+
+    body = c.get('/').data.decode()
+
+    # Anchored on the rendered row, not on the class name: the stylesheet
+    # defines .ota-row / .ota-badge on every page, armed or not.
+    assert '<tr class="ota-row">' not in body
+    assert 'class="ota-badge"'    not in body
+
+
+def test_history_empty_row_spans_every_column(client):
+    c, _ = client
+
+    body = c.get('/').data.decode()
+
+    assert 'colspan="5"' in body
+
+
 def test_get_index_shows_connection_history(client):
     c, state = client
     with state.lock:

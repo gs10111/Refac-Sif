@@ -43,6 +43,22 @@
     td { padding: 7px 10px; border-bottom: 1px solid #111830; }
     tr:hover td { background: #0f3460; }
     .empty { color: #444; font-style: italic; padding: 14px 10px; }
+    .panel-ota { margin-top: 26px; }
+    .ota-state {
+      background: #0f3460; color: #aaa; padding: 10px 14px;
+      border-radius: 4px; font-size: 0.85rem; border-left: 4px solid #0f3460;
+    }
+    .ota-state.armed {
+      color: #ffd6dd; background: #4a1626; border-left: 4px solid #e94560;
+    }
+    button.secondary { background: #0f3460; }
+    button.secondary:hover { background: #16487f; }
+    .ota-row td { background: #2b1220; border-left: 3px solid #e94560; }
+    .ota-row:hover td { background: #4a1626; }
+    .ota-badge {
+      background: #e94560; color: #fff; padding: 2px 7px;
+      border-radius: 3px; font-size: 0.72rem; letter-spacing: 1px;
+    }
   </style>
 </head>
 <body>
@@ -70,6 +86,23 @@
         </div>
         <button type="submit">SALVAR</button>
       </form>
+
+      <div class="panel-ota">
+        <h2>Atualizacao OTA</h2>
+        {% if ota_armed %}
+          <div class="ota-state armed">OTA ARMADO &mdash; proximo device que transmitir</div>
+          <form method="POST" action="/ota">
+            <input type="hidden" name="armed" value="0">
+            <button type="submit" class="secondary">DESARMAR</button>
+          </form>
+        {% else %}
+          <div class="ota-state">OTA desarmado</div>
+          <form method="POST" action="/ota">
+            <input type="hidden" name="armed" value="1">
+            <button type="submit">ARMAR OTA</button>
+          </form>
+        {% endif %}
+      </div>
     </div>
 
     <div class="panel-history">
@@ -81,20 +114,22 @@
             <th>Horario</th>
             <th>Amostras</th>
             <th>Bateria (mV)</th>
+            <th>OTA</th>
           </tr>
         </thead>
         <tbody>
           {% if connections %}
             {% for entry in connections | reverse %}
-            <tr>
+            <tr{% if entry.ota_sent %} class="ota-row"{% endif %}>
               <td>{{ entry.ip }}</td>
               <td>{{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
               <td>{{ entry.n_samples }}</td>
               <td>{{ entry.battery_mv }}</td>
+              <td>{% if entry.ota_sent %}<span class="ota-badge">OTA</span>{% endif %}</td>
             </tr>
             {% endfor %}
           {% else %}
-            <tr><td colspan="4" class="empty">Nenhuma conexao registrada ainda.</td></tr>
+            <tr><td colspan="5" class="empty">Nenhuma conexao registrada ainda.</td></tr>
           {% endif %}
         </tbody>
       </table>

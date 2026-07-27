@@ -1,5 +1,7 @@
 import dataclasses
-from flask import Flask, Response, render_template, request, redirect
+from flask import (
+    Flask, Response, make_response, render_template, request, redirect,
+)
 
 from app_state import AppState
 from protocol.packet import UINT16_MAX
@@ -45,9 +47,33 @@ def create_app(state: AppState) -> Flask:
     @app.route('/')
     def index():
         with state.lock:
-            config = dataclasses.replace(state.config)
+            config      = dataclasses.replace(state.config)
             connections = list(state.connections)
-        return render_template('index.html', config=config, connections=connections)
+            ota_armed   = state.ota_armed
+        page = make_response(render_template(
+            'index.html', config=config, connections=connections,
+            ota_armed=ota_armed,
+        ))
+        # The page is the operator's only instrument: a cached render showing
+        # a stale arming state is worse than no page at all.
+        page.headers['Cache-Control'] = 'no-store'
+        return page
+
+    @app.route('/ota', methods=['POST'])
+    def update_ota():
+        """Arm or disarm the one-shot OTA flag — separate from the config form
+        so saving an unrelated field can never arm or disarm a device."""
+        armed = request.form.get('armed')
+        if armed not in ('0', '1'):
+            reason = ('armed: campo ausente.' if armed is None
+                      else f'armed: "{armed}" nao e um valor valido.')
+            return Response(
+                f'{reason} Use 1 para armar o OTA ou 0 para desarmar.',
+                status=400, mimetype='text/plain',
+            )
+
+        state.set_ota_armed(armed == '1')
+        return redirect('/', 303)
 
     @app.route('/config', methods=['POST'])
     def update_config():
