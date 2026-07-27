@@ -9,7 +9,21 @@
 // Survives a deep-sleep wake; reloaded from flash on every other reset, which is
 // why BELT_INITIAL_STAGE has to be the safe state rather than a resume point.
 RTC_DATA_ATTR static BeltStage stage = BELT_INITIAL_STAGE;
-RTC_DATA_ATTR static ServerConfig serverConfig = {
+
+// Plain RAM, NOT RTC memory — deliberately, and it is the only variable here that
+// should not survive a deep sleep.
+//
+// Production keeps the server response in an ordinary member of the IMU object
+// (ICM42688P.h:257-264), so a timer wake starts from the compiled defaults and the
+// server re-states the config on the next transmission. DEC-0 settles it on its
+// own, but fidelity and safety agree here, which is not always true: a device that
+// was handed a bad sleep_min self-heals on its next wake, whereas persisting it
+// would put a device that took sleep_min = 1 — or 1440 — permanently out of reach
+// of the fix.
+//
+// Within one wake it still carries across acquisitions, because D1 keeps the device
+// awake for the whole cycle and nothing here is reinitialised until a reset.
+static ServerConfig serverConfig = {
     DEFAULT_SLEEP_TIME_MIN,
     DEFAULT_IDLE_TIMEOUT_MIN,
     DEFAULT_MAX_ACQUISITIONS,

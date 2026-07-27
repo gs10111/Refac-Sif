@@ -43,7 +43,7 @@ defect** — it freezes an unreviewed decision into the suite.
 | P5 | **`max_acq` counts attempts, not successful uploads.** The counter increments on entry to the collect, before anything downstream can fail. Counting successes would hang a device at full draw with the server unreachable. | `ICM42688P.cpp:363` | matches-original, and structurally enforced: `AcquisitionService` never learns whether a transmit happened. |
 | P6 | **`max_acq == 0` ends the cycle without collecting.** | falls out of `loopCounter > nSamples` | matches-original. The web form refuses 0; the firmware still honours it. |
 | P7 | **The cold-boot 10 s timer sleep is dead code.** `wakeup_stage` is initialised to 1 and nothing ever assigns 0. | `main.cpp:19,139` | DEC-10 amended: **not restored**. |
-| P8 | **Server config is not persisted across deep sleep.** `IIM.response` is plain RAM; every timer wake starts from the compiled defaults until the next server contact. | `ICM42688P.h:257-264` | matches-original. NOTE: the refactor holds `serverConfig` in `RTC_DATA_ATTR` (`app.cpp:12`), so it now **survives** a deep-sleep wake. That is a deliberate divergence and needs a DEC-0 justification on the record — see [gaps](#4-what-worries-me-most). |
+| P8 | **Server config is not persisted across deep sleep.** `IIM.response` is plain RAM; every timer wake starts from the compiled defaults until the next server contact. | `ICM42688P.h:257-264` | matches-original, **and safer**. The refactor had moved `serverConfig` into `RTC_DATA_ATTR` (`app.cpp:12`); lave ruled it **reverts to plain RAM**. Not only on fidelity: config that does not survive deep sleep means a device that received a bad `sleep_min` self-heals to the compiled defaults on the next wake, while persisting it means a device that took `sleep_min = 1` keeps it forever, out of reach, until something happens to tell it otherwise. Fidelity and safety agree. **Open until the revert lands** — `app.cpp:12` still has the attribute. |
 
 ---
 
@@ -87,15 +87,16 @@ defect** — it freezes an unreviewed decision into the suite.
 | A22 | **(DEC-1)** Every payload length is a whole number of frames: `bytes % 18 == 0`. | **open** | Guaranteed by frame-addressed capacity, but no test asserts it. Add `bytesStored() % SAMPLE_SIZE_BYTES == 0` after a wrap, and mutation M3. |
 | A23 | A failed allocation is fatal, the ring reports zero capacity, and no sample is ever written. | host / **HW** | `test_allocation_failure_calls_fatal`, `test_failed_allocation_yields_a_ring_that_reports_no_capacity`, `test_no_sample_is_ever_written_when_allocation_failed` + `mutant_skip_allocation_check`. A *real* PSRAM failure is H4. |
 | A24 | Not wrapped → one range from index 0 (byte-identical to production). Wrapped → two ranges, tail first. | host | `test_plan_is_one_range_from_zero_when_not_wrapped`, `test_plan_is_two_ranges_starting_at_tail_when_wrapped`, `test_append_overwrites_oldest_frame_when_full`, `test_bytes_stored_never_exceeds_capacity` |
-| A25 | The **live** transmit sends both ranges when wrapped. | **open** | `app.cpp:128-131` sends `plan.first` only. R8, round 7 (T45). Today a wrapped ring silently truncates. |
+| A25 | The **live** transmit sends both ranges when wrapped, oldest first. | host | Closed by `17c762f`. `test_transmit_sends_oldest_first_when_the_ring_has_wrapped` + `mutant_send_from_index_zero`. |
 
 ### 1.4 Transmission
 
 | # | Criterion | Status | Test / note |
 |---|---|---|---|
-| A26 | Uplink per connection: `[4 B uint32 LE total][N × 18 B][2 B uint16 LE battery_mv]`. | **open** (firmware side) | `TcpClient` lives in `src/`, not host-compiled. Pinned only from the reader end by `backend/tests/test_recv_exact.py` + `test_tcp_server.py`. Round 9 should move the framing into `lib/`. |
-| A27 | Battery = `analogRead(36)` mapped `0..4095 → 0..19803` mV. | **HW** | H11. Verified by reading only (disclosed by gomi); the two-line pin lands in round 7. |
-| A28 | Only a **successful** send resets the ring; a failed transmit carries its data forward. | struct | `app.cpp:131-139` (matches `main.cpp:264-265`). T47b, round 7. |
+| A26 | Uplink per connection: `[4 B uint32 LE total][N × 18 B][2 B uint16 LE battery_mv]`, header little-endian. | host | Closed by `17c762f`. `test_transmit_writes_header_then_samples_then_battery`, `test_header_is_total_sample_bytes_little_endian`. Also pinned from the reader end by `backend/tests/test_recv_exact.py`. |
+| A27 | Battery = `analogRead(36)` mapped `0..4095 → 0..19803` mV. | **HW** | H11. Verified by reading only (disclosed by gomi); the two-line pin lands with round 7's follow-up. |
+| A28 | The ring is cleared **once the connection opened**, even if the write then failed. It is preserved only when the connection never opened. | host | `test_ring_is_cleared_once_the_connection_opened_even_if_the_write_failed`, `test_ring_is_preserved_when_the_connection_never_opened`. **Correction:** an earlier revision of this document said "only a successful send resets the ring". That was wrong — it restated a code comment instead of reading the original. `main.cpp:233-265`: the send loop `break`s on a failed write, flow falls through to the battery write, and `IIM.tail = 0; IIM.head = 0;` runs regardless. Data loss on a mid-transmit failure is **matches-original**. |
+| A28b | A missing config response leaves the config alone but does not resurrect the data. | host | `test_missing_response_leaves_the_config_but_not_the_data`, `test_transmit_reports_failure_on_short_write` |
 | A29 | The radio goes off at the end of every iteration, on every path. | struct | `app.cpp:144-151` says so explicitly: *"STRUCTURAL, not tested"*. R7 closed by construction; round 9 extracts it. |
 
 ### 1.5 Config response
@@ -168,9 +169,15 @@ whether it is untestable or merely unseamed.
 
 ## 3. What the mutation harness does not defend
 
-Six mutations exist and all six behave (round 6: every named catcher dead, every
-named survivor alive). The harness is the strongest quality artefact on this branch.
-The gaps are about **coverage**, not correctness.
+Seven mutations exist and all seven behave (round 6: every named catcher dead, every
+named survivor alive; round 7 added `mutant_send_from_index_zero`). The harness is the
+strongest quality artefact on this branch. The gaps are about **coverage**, not
+correctness.
+
+For how it compares to an automated mutation tool — and why the two are not
+substitutes — see [tooling-evaluation.md](tooling-evaluation.md). Short version:
+mutmut generates 187 mutants across the backend and cannot express "delete this line";
+ours can, and nobody would hand-write 187.
 
 ### 3.1 The structural gap
 
@@ -220,29 +227,33 @@ grep -o 'MUTANT_[A-Z_]*' test/README.md | sort -u  # rows
 
 ## 4. What worries me most
 
-Ranked, and each is a question for lave rather than a finding.
+Ranked. Rulings from lave recorded inline.
 
 1. **A45 / DEC-2 is not implemented, and the repo is public.** Placeholder
    credentials that build cleanly are the failure mode DEC-2 named explicitly: the
-   build succeeds and the device is mute. This is the only open item with a
-   consequence outside the codebase.
+   build succeeds and the device is mute. The only open item with a consequence
+   outside the codebase. — **Ruled:** confirmed, scheduled as round 10, after OTA.
+   Still open; the longer it sits, the more commits land on a public tree that is one
+   careless paste from carrying a real credential.
 2. **A3 / H6 is an assumption, not an observation.** `BELT_INITIAL_STAGE` being the
    safe state is the argument for reset safety, and it holds only if a non-deep-sleep
    reset really does reload RTC memory. Everything in §1.1 is downstream of a fact
-   nobody has watched happen.
-3. **P8: `serverConfig` moved from RAM to `RTC_DATA_ATTR`.** In the original, config
-   does not survive deep sleep — every timer wake starts from the compiled defaults.
-   In the refactor it does. That is arguably better and it is a **behaviour change**,
-   so under DEC-0 it needs a justification on the record or a revert. Concretely: a
-   device that once received `sleep_min = 1` keeps it forever across wakes, where
-   production would have reverted to 240 on the next boot.
-4. **A25 — a wrapped ring truncates silently today.** ~777 s of belt at 50 Hz before
-   the first wrap, so a belt that runs longer than 13 minutes between magnet passes
-   hits it. The idle timeout is 20 minutes, so the window is real, not theoretical.
-   Round 7 closes it; until it does, the failure is silent on both ends.
-5. **A26 — the uplink framing has no firmware-side test at all.** It is pinned only
-   from the reader end. The two sides could drift and the backend suite would stay
-   green.
+   nobody has watched happen. — **Ruled:** agreed, most load-bearing unverified
+   assumption on the branch; it is Q2 of the tooling brief and stays there.
+3. **P8: `serverConfig` in `RTC_DATA_ATTR`.** — **Ruled: revert to plain RAM.**
+   Fidelity and safety agree, see P8. Open until the revert lands.
+4. ~~A25 wrapped-ring truncation~~ — **closed by `17c762f`.**
+5. ~~A26 no firmware-side framing test~~ — **closed by `17c762f`** (nine tests in
+   `test_transmit` plus `mutant_send_from_index_zero`). Closing it also corrected an
+   error of mine — see A28.
+
+New, from the round-7 read:
+
+6. **`ACQ_STOPPED_BY_IDLE` still discards a full ring unsent (A16, P4).** Faithful to
+   production and therefore correct, but worth stating plainly since the buffer is now
+   proven to hold up to 699984 B: when the belt stops, up to ~13 minutes of samples are
+   dropped without ever reaching the server, and nothing logs it. If that is ever
+   considered a defect it is a **product** decision for bigboss, not a QA finding.
 
 ---
 

@@ -102,6 +102,31 @@ Each flag is documented at the `#ifdef` that implements it. Rules:
   different one — but the table must not imply every assertion earns its place
   against every flag.
 
+## Checks a test cannot make
+
+Some properties are facts about a declaration rather than about any behaviour a
+fake can observe. Writing a test for one of those produces a test that passes
+whichever way the declaration goes, which is worse than admitting the gap. Use a
+grep, and keep it here where it will be run.
+
+```
+grep -c 'RTC_DATA_ATTR' src/app/app.cpp        # must be exactly 1
+```
+
+Only the belt stage belongs in RTC memory. The server config must NOT: production
+holds it in an ordinary member (`ICM42688P.h:257-264`), so a timer wake starts from
+the compiled defaults and the server re-states it on the next transmission. A device
+handed a bad `sleep_min` then self-heals on its next wake, where persisting it would
+put a device that took `sleep_min = 1440` permanently out of reach of the fix.
+
+Two other guarantees are currently structural rather than tested, both because the
+cycle lives in Arduino code a host build cannot reach. Round 9's extraction is where
+they stop being so:
+
+- `runCycleIteration` reaches `_power.enterAcquisitionMode()` on every path
+  (`app.cpp`, one unconditional call outside every branch — this is R7's shape).
+- `App::begin` calls `_imu.wake()` exactly once per boot rather than per acquisition.
+
 ## Why a red stub round is not coverage
 
 The stub round proves a test is **wired to the code**. Only a mutation proves it can

@@ -204,9 +204,40 @@ static void test_max_acquisitions_of_zero_ends_the_cycle_immediately(void)
     TEST_ASSERT_EQUAL_UINT8(BELT_STAGE_ARM_TRIGGER, step.next);
 }
 
+// T21b — nothing may transmit between receiving update=1 and the OTA boot.
+//
+// This is a coupling the disarm contract creates, and it is load-bearing from the
+// moment update=0 stops being silence. The server answers EVERY completed
+// transmission, and every connection that did not win the claim carries update=0.
+// So if the device ran one more acquisition after taking an arming, its own next
+// transmission would collect update=0 and clear the flag it had just set — the OTA
+// would never happen, and the symptom would look like the server never sent it.
+//
+// Production holds this by restarting immediately after persisting
+// (main.cpp:284-288), abandoning the rest of the wake. That abandonment was an
+// accepted side effect of D3; under the disarm contract it becomes a REQUIREMENT.
+//
+// CHARACTERISATION TEST: it already passes — belt_next checks
+// updateRequestedByServer ahead of everything except the OTA flag. It is here so
+// that a future "finish the cycle before rebooting, it's tidier" change fails
+// loudly instead of silently disarming the device.
+static void test_a_pending_update_restarts_before_any_further_acquisition(void)
+{
+    BeltInputs in = fresh_inputs();
+    in.updateRequestedByServer = true;
+    in.acquisitionsDone = 1; // four still owed — the cycle is nowhere near done
+    in.maxAcquisitions = DEFAULT_MAX_ACQUISITIONS;
+
+    BeltStep step = belt_next(BELT_STAGE_CYCLE, in);
+
+    TEST_ASSERT_EQUAL_UINT8(BELT_ACTION_RESTART, step.action);
+    TEST_ASSERT_NOT_EQUAL(BELT_ACTION_RUN_CYCLE_ITERATION, step.action);
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_a_pending_update_restarts_before_any_further_acquisition);
     RUN_TEST(test_max_acquisitions_of_zero_ends_the_cycle_immediately);
     RUN_TEST(test_cold_boot_arms_trigger_and_sleeps);
     RUN_TEST(test_trigger_wake_enters_cycle);
