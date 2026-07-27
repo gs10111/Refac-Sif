@@ -33,6 +33,8 @@ pio test -e mutant_store_when_not_ready
 pio test -e mutant_skip_allocation_check
 pio test -e mutant_imu_stays_awake_on_trigger_sleep
 pio test -e mutant_send_from_index_zero
+pio test -e mutant_clear_ota_flag_before_ap
+pio test -e mutant_disarm_writes_unconditionally
 ```
 
 A green suite proves the tests *can* pass. It does not prove they can *detect*
@@ -50,6 +52,8 @@ rather than enforcing a behaviour.
 | `mutant_cooldown_samples_through` | `MUTANT_COOLDOWN_SAMPLES_THROUGH` | `BeltTrigger::poll` tracks the pin level during the cooldown and suppresses the event, instead of not reading the pin at all | `test_belt_trigger` T23, T26, T26b | T22, T24, T25 — none change level inside the window |
 | `mutant_idle_timeout_in_seconds` | `MUTANT_IDLE_TIMEOUT_IN_SECONDS` | `AcquisitionService` treats `idle_timeout_min` as seconds | `test_acquisition` T29, at its 20001 ms probe | **T28** — a 20-second timeout also stops at 1200001 ms, so T28 pins only the endpoint |
 | `mutant_store_when_not_ready` | `MUTANT_STORE_WHEN_NOT_READY` | frames are stored with `DATA_RDY` clear, filling the buffer at the polling rate instead of the ODR | `test_acquisition` T32 | T33, T33b — they set the fake ready, so the mutation is invisible to them |
+| `mutant_clear_ota_flag_before_ap` | `MUTANT_CLEAR_OTA_FLAG_BEFORE_AP` | the OTA flag is spent before the access point exists — production's order | `test_ota` T50 (call sequence), T51, T52 | T54, T55, T56, T57 — none reach that function with the flag set |
+| `mutant_disarm_writes_unconditionally` | `MUTANT_DISARM_WRITES_UNCONDITIONALLY` | the disarm writes on every config receipt instead of only on the transition — right state, one NVS write per connection forever | `test_ota` T56 | **T55, T57** — the flag ends correct either way; the cost is flash endurance, not behaviour |
 | `mutant_send_from_index_zero` | `MUTANT_SEND_FROM_INDEX_ZERO` | the uploader sends only the first range, from index 0, ignoring `tail` — R8 verbatim | `test_transmit` T45 | **every other test in the suite** — they use an unwrapped ring, where the two implementations agree byte for byte. That is why R8 survived review: the wrong code is correct for the first thirteen minutes |
 | `mutant_imu_stays_awake_on_trigger_sleep` | `MUTANT_IMU_STAYS_AWAKE_ON_TRIGGER_SLEEP` | `PowerManager` skips `imu.sleep()` on the ext0 path only — R5 on the sleep that lasts hours | `test_power` T38 | **T37**, deliberately: breaking one path proves the two are pinned independently, which killing both would not |
 | `mutant_skip_allocation_check` | `MUTANT_SKIP_ALLOCATION_CHECK` | `make_sample_ring` does not check the allocation, building a full-capacity ring over a null pointer — R1 restored | `test_sample_store` T35, T36b | **T36** — nothing is written anyway, because `RingBuffer` refuses a null storage pointer. The defence is in the ring, not in the check |

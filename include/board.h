@@ -45,6 +45,14 @@
 #define TCP_SERVER_PORT  12345
 
 // =============================================================================
+// OTA
+// SSID is built as "<prefix><MAC>", matching main.cpp:78 byte for byte.
+// =============================================================================
+#define OTA_AP_SSID_PREFIX  "Update driver - "
+#define OTA_AP_PASSWORD     "12345678"
+#define OTA_WINDOW_MINUTES  5
+
+// =============================================================================
 // Memory
 // =============================================================================
 // Size of the PSRAM acquisition buffer, in BYTES — the same ps_malloc size the

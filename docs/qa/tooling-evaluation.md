@@ -155,6 +155,119 @@ acting on: *nothing asserts that the sentinel terminates the writer thread*, so 
 property is caught only by wall clock — which in CI reads as flakiness rather than as
 a failure, and gets retried rather than investigated.
 
+### The 70 survivors, triaged
+
+Run on the green baseline (117 passing): **188 mutants, 116 killed, 2 timeout, 70
+survived.** Every survivor's diff was read. The population is not what the first
+sample suggested:
+
+| Class | Count | Verdict |
+|---|---|---|
+| **f-string text** — `f"Saved {x}"` → `f"XXSaved {x}XX"` | **22 (31%)** | noise, and **removable** — see below |
+| `addr[0]` → `addr[1]` **inside a log message** | 7 | noise |
+| Untested entrypoints — `server_main`, `exit_monitor`, `__main__` | 15 | real code, no tests; binds sockets and reads stdin |
+| Operational constants in `settings.py` | 8 | low value; nothing asserts them |
+| **Equivalent mutants** | **3 (4%)** | cannot be killed, must not be chased |
+| **Real behavioural holes** | **~10** | listed below, worth tests |
+
+Triaged independently by sama and by me. Where we disagreed, sama was right three
+times; the table above is the reconciled version and the corrections are called out
+below.
+
+**Answering the triage-cost question directly: the equivalent-mutant class is small —
+3 of 70.** `saved = False → None` and `running = False → None`, both falsy under a
+truthiness test. The third I originally filed as a real hole and it is not:
+`if n <= 0` → `if n < 0` in `recv_exact`. With `n = 0` the guard is skipped, but
+`remaining = 0` so `while remaining > 0` never runs and the function returns `b''`
+having touched no socket — identical observable behaviour, including the zero
+`recv` calls that `test_recv_exact_zero_bytes_returns_empty_without_calling_recv`
+asserts. Verified by reading `server/tcp_server.py:109-115`, not taken on trust.
+Either way the class is small: it is not what inflates triage cost.
+
+**The class that does is f-strings, and it is a configuration mistake of mine.**
+`--disable-mutation-types=string` does not remove them, because mutmut treats
+`fstring` as a **separate mutation type** — verified in the installed source, not
+inferred: `mutmut/__init__.py:451-465` lists `'string'` and `'fstring'` as distinct
+keys. The correct flag is:
+
+```
+--disable-mutation-types=string,fstring
+```
+
+Expected effect: survivors drop from **70 to ~48**, and what remains is almost
+entirely behavioural. Worth re-running once to confirm, and worth fixing before anyone
+triages this list by hand.
+
+**Disable `fstring` and `string`. Never disable `name`, `number` or `operator` to
+chase the same noise.** The tempting next step is to kill the `addr[0] → addr[1]`
+family the same way — and it would suppress two of the best findings in this run.
+Mutant 127 is `addr[0] → addr[1]` in `data_queue.put`, which silently renames every
+CSV; mutant 93 is an **operator** mutation *inside* an f-string, and it is the one
+that exposed a test asserting on a substring. `fstring` only suppresses the
+replace-the-whole-text form, so both survive the filter — but a broader filter would
+hide them.
+
+The general rule, which is the same one the firmware harness already follows: a
+mutation type is safe to disable when **no test could legitimately assert on it**.
+Log wording qualifies. Values and operators inside a message do not, because the
+message can carry a computed number that something downstream reads.
+
+#### The real holes, ranked
+
+| Mutants | Behaviour not pinned | Why it matters |
+|---|---|---|
+| **93** | `f'peer closed after {n - remaining}/{n} bytes'` → `{n + remaining}` | **A weak assertion, not missing coverage — the most valuable row here.** `test_recv_exact_error_reports_partial_progress` asserts `'3/8' in str(e)`. The mutant produces `13/8`, and `'3/8'` **is a substring of** `'13/8'`, so the test passes on a wrong message. Found by sama; I had filed it as message noise and was wrong. Fix is `assert 'after 3/8 bytes'`. |
+| 86 | `if n <= 0` → `if n <= 1` in `recv_exact` | `recv_exact(conn, 1)` would return `b''` without reading. No test calls it with n=1, and 1 is a byte count a short header produces. |
+| 102 | `expected > MAX_PAYLOAD_BYTES` → `>=` | The inclusive boundary of the corrupt-length guard. Cheap to pin without a 1.4 MB allocation: monkeypatch the constant to 36 and assert 36 accepted, 37 refused. |
+| 26, 27, 22 | `BATTERY_INVALID = -1` and `CLIENT_TIMEOUT_SEC = 6.0` survive mutation | The tests **import the constants**, so the test and the constant agree and can be wrong together — the same class as the CSV header, and DEC-0 applies for the same reason: both values are production-fidelity (`-1` is the original's battery sentinel, `6.0` its socket timeout). Pin them as **literals**. sama's point; I had rated these low value and that was the wrong call. |
+| 154 | `if value <= 0` → `if value <= 1` in `validate_config_form` | **`max_acq = 1` is a legitimate setting** and this mutation would reject it. The lower bound is unpinned in the direction that breaks real use. |
+| 149, 152 | `continue` → `break` in the validation loop | The form is supposed to report **all** invalid fields; with `break` it reports only the first. No test submits two bad fields at once. |
+| 127 | `data_queue.put((addr[0], ...))` → `addr[1]` | The CSV filename would become `<port>_<timestamp>.csv` instead of `<ip>_...`. A silent corpus-naming change — the exact class DEC-3 protected the header from. |
+| 171, 173 | `if armed is None` → `is not None` in the OTA route | Inverts which error reason is reported for a bad `/ota` post. |
+| 134, 138 | `continue` → `break` on `socket.timeout`; `running = False` → `True` | 134 stops the accept loop after the first 1-second timeout — the server silently stops accepting connections. Both live in `server_main`/`exit_monitor`, which have no tests at all. |
+| 82 | `subprocess.run(..., check=True)` → `check=False` | `check=True` is what converts a non-zero `gio` exit into the exception the B6 logic branches on. The existing B6 tests monkeypatch `run` to raise, so they never exercise it. |
+
+#### Two survivors to leave alive on purpose
+
+**`MAX_PAYLOAD_BYTES = 1400000 → 1400001` (mutant 24).** Killing it means pinning the
+literal, which would **contradict the comment that says this number is sanity headroom
+and not a tuned limit**. A test asserting 1400000 would make the documentation false.
+Leave it, and note that mutant 102 — the `>` vs `>=` *boundary behaviour* — is a
+different thing and is worth pinning. sama's call, and better than my original one:
+I had listed 24 alongside 102 as a single hole. Pinning a number the design says is
+arbitrary is optimising the score against the documentation.
+
+**The equivalent pair.** Closing them would mean restructuring working code to satisfy
+a tool.
+
+Both belong in writing. A survivor deliberately left alive is indistinguishable from
+one nobody looked at, unless someone wrote down which it is.
+
+#### The glue: ~15 survivors nothing can reach
+
+`server_main`, `exit_monitor` and the `__main__` block account for roughly 15
+survivors — `srv.listen(6)`, `max_workers=11`, `settimeout(2.0)`, `while False`,
+`srv`/`state`/`threads = None`. All unkillable by unit tests, because **nothing in the
+suite ever binds a socket**. The one that would actually hurt is `continue → break` on
+`socket.timeout`: the accept loop exits after the first 1-second timeout and the
+server silently stops accepting connections.
+
+sama proposes one loopback integration test — bind `server_main` on port 0, connect a
+real client, send header + payload + battery, assert the 10-byte response. **From a
+coverage standpoint I support it, and killing mutants is the lesser reason.** Every
+`handle_client` test today drives a `MagicMock` that returns whatever it was queued
+regardless of the byte count it was asked for, which is why a wrong-size `recv_exact`
+could pass all 117 tests. A real socket cannot ignore a byte count. That is a
+documented single point of failure in the suite, and one test removes it.
+
+Whether it is in scope for a plant server is lave's call, not QA's.
+
+**`protocol/packet.py` has exactly one survivor and it is message text.** The module
+carrying the wire contract is fully pinned. Combined with `app_state.py`'s 18/18, the
+two modules where a defect would be worst are the two the suite covers best. That is
+the strongest signal in this run and it is worth saying plainly, because a mutation
+report is otherwise all bad news.
+
 ### Does it agree with our hand-made mutation?
 
 **Yes on the behaviour, no on the mutant, and the disagreement is instructive.**
@@ -197,9 +310,10 @@ would never hand-write 187. **Different instruments, same dial.**
 3. Record the invocation in `backend/README.md` — pinned version, the
    `--disable-mutation-types=string` flag, and *why* both are there. An undocumented
    pin is a trap for the next person.
-4. Triage the 69 by file, once. `config/settings.py` survivors are almost certainly
-   constants with no behavioural meaning; `server/tcp_server.py` is where the real ones
-   will be.
+4. Re-run with `--disable-mutation-types=string,fstring` and confirm survivors drop to
+   roughly 48. Triage is [done](#the-70-survivors-triaged); the eight rows in that table
+   are the backlog, and `recv_exact`'s boundary and the `max_acq = 1` rejection are the
+   two I would write first.
 5. **Do not put a mutation-score gate in CI.** 61.5% is a baseline to watch, not a
    number to hit. A score target turns into tests written against mutants rather than
    against behaviour — the firmware harness's own rule ("choose the mutation before you

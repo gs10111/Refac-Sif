@@ -32,8 +32,27 @@ static ServerConfig serverConfig = {
 
 void App::begin()
 {
-    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Desabilita brownout reset
     Serial.begin(115200);
+
+    // Before anything else, as production does at main.cpp:73 — the flag is read
+    // and acted on ahead of pin setup and the acquisition path, which is also what
+    // guarantees no transmission can intervene between a crash here and the retry.
+    const OtaEntry ota = enter_ota_if_armed(_ap, _store, OTA_AP_SSID_PREFIX, OTA_AP_PASSWORD);
+    if (ota == OTA_SERVING)
+    {
+        runOtaWindow(); // never returns — restarts when the window closes
+    }
+    else if (ota == OTA_BRINGUP_FAILED)
+    {
+        // The flag is still set, so the next boot tries again. Tear the half-built
+        // AP down and carry on with an ordinary cycle; if this device reaches the
+        // server, update=0 will disarm it and the request ends visibly rather than
+        // latching until some future wake.
+        Serial.println("OTA: falha ao subir o AP, tentando no proximo boot");
+        _ap.stop();
+    }
+
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Desabilita brownout reset
     pinMode(MAGNET_TRIGGER_PIN, INPUT_PULLUP);
     pinMode(IMU_CS_PIN, OUTPUT);
     pinMode(BATTERY_ADC_PIN, INPUT);
@@ -66,7 +85,12 @@ void App::begin()
 void App::run()
 {
     BeltInputs in;
-    in.otaFlagSet = false; // NVS-backed OTA arming lands in round 8
+    // Always false here, and correctly so: the flag is read and consumed in
+    // begin(), before run() is ever called. If it had been set, this boot either
+    // never reached run() (it is serving the upload page) or it failed to bring the
+    // AP up and left the flag for the next boot. Either way belt_next must not see
+    // it, or the device would restart into OTA a second time.
+    in.otaFlagSet = false;
     in.acquisitionsDone = _acq->acquisitionsAttempted();
     in.maxAcquisitions = serverConfig.max_acquisitions;
     in.idleTimedOut = _idleTimedOut;
@@ -90,13 +114,20 @@ void App::run()
         _power.deepSleepTimer(serverConfig.sleep_time_min);
         break;
 
-    case BELT_ACTION_ENTER_OTA:
     case BELT_ACTION_RESTART:
-        // Both are unreachable this round: otaFlagSet is hardwired false above and
-        // _updateRequested is never set until round 8 wires the NVS flag and the
-        // SoftAP. They restart rather than fall through, because no path in this
-        // firmware returns without an action — an empty case is what left the
-        // refactor spinning with nothing to do.
+        // The arming is already persisted — apply_update_field wrote it the moment
+        // the response arrived. Restarting here is what enters the OTA boot path,
+        // and it MUST happen before another acquisition: the next transmission
+        // would carry update=0, which is a disarm, and the device would clear the
+        // flag it had just taken. T21b pins that precedence.
+        ESP.restart();
+        break;
+
+    case BELT_ACTION_ENTER_OTA:
+        // Unreachable: the flag is consumed in begin(), before run() is ever
+        // called, so belt_next never sees otaFlagSet true. It restarts rather than
+        // falling through because no path in this firmware returns without an
+        // action — an empty case is what left the refactor spinning.
         ESP.restart();
         break;
 
@@ -147,7 +178,11 @@ void App::runCycleIteration()
             serverConfig = newConfig;
             _acq->setConfig(serverConfig);
             _trigger.setCooldownSec(serverConfig.trigger_cooldown_sec);
-            _updateRequested = (newConfig.update != 0);
+            // Clause 1: update=1 arms and asks for a restart, update=0 DISARMS a
+            // flag left set by a failed bring-up. It is not silence, as it is in
+            // the original (main.cpp:282 has no else). Read before write, so a
+            // steady stream of zeroes costs no flash.
+            _updateRequested = apply_update_field(_store, newConfig.update);
         }
     }
 
@@ -159,4 +194,27 @@ void App::runCycleIteration()
     // NOTE: that this line is reached on every path is STRUCTURAL, not tested — the
     // cycle lives in Arduino code a host build cannot reach. Round 9 extracts it.
     _power.enterAcquisitionMode();
+}
+
+void App::runOtaWindow()
+{
+    Serial.println("Aguardando atualizacao OTA...");
+
+    const uint32_t start = millis();
+    const uint32_t timeoutMs = OTA_WINDOW_MINUTES * 60UL * 1000UL;
+
+    while (true)
+    {
+        _ap.handleClient();
+        delay(10);
+
+        if ((millis() - start) >= timeoutMs)
+        {
+            // The window opened and nobody used it. The flag is already spent, so
+            // this restarts into an ordinary cycle. Production does the same at
+            // main.cpp:91-95.
+            Serial.println("Tempo de espera para OTA esgotado. Reiniciando...");
+            ESP.restart();
+        }
+    }
 }

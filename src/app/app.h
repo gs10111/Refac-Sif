@@ -7,6 +7,7 @@
 #include "sample_store.h"
 #include "belt_cycle.h"
 #include "uploader.h"
+#include "ota_arming.h"
 #include "belt_trigger.h"
 #include "ring_buffer.h"
 #include "../services/esp32_platform.h"
@@ -21,6 +22,7 @@ public:
 
 private:
     void runCycleIteration();
+    void runOtaWindow();
 
     SPIClass            _spi{HSPI};
     ICM42688P           _imu{_spi, IMU_CS_PIN, ACCEL_RANGE_16G, ODR_50HZ};
@@ -36,6 +38,8 @@ private:
     // order, and these references must be bound to live objects.
     PowerManager        _power{_imu, _wifi, _cpu, _sleeper};
     TcpClient           _tcp;
+    NvsStore            _store;
+    EspAccessPoint      _ap;
 
     // Plain RAM, and that is correct: they describe the cycle currently in
     // progress, and a cycle never spans a reset. D1 keeps the device awake between
