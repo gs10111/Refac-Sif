@@ -563,6 +563,57 @@ def test_save_data_does_not_report_a_save_failure_when_only_the_copy_failed(
     assert not any('failed to save' in m for m in messages), messages
 
 
+def test_save_data_does_not_copy_to_drive_when_the_local_write_fails(tmp_path, monkeypatch):
+    """The other side of the `if saved` guard: no file, no copy.
+
+    Copying a file the write never produced turns a disk failure into a second,
+    more confusing error about a path that does not exist. This test is the only
+    thing covering that branch — every other B6 test takes the write-succeeded
+    path.
+    """
+    copy_calls = []
+
+    def failing_open(*args, **kwargs):
+        raise OSError('no space left on device')
+
+    monkeypatch.chdir(tmp_path)
+    # Module-scoped shadow of the builtin — safer than patching builtins.open
+    # globally, which pytest and logging also use.
+    monkeypatch.setattr(tcp_server, 'open', failing_open, raising=False)
+    monkeypatch.setattr(tcp_server.subprocess, 'run',
+                        lambda *a, **k: copy_calls.append(a))
+
+    tcp_server.data_queue.put(
+        ('10.0.0.9', datetime.datetime(2026, 5, 20, 14, 0, 0),
+         [[1, 2, 3, 4, 5, 6, 7, 8, BATTERY_MV]]))
+    tcp_server.data_queue.put(None)
+    tcp_server.save_data()
+
+    assert copy_calls == []
+
+
+def test_save_data_reports_the_write_failure(tmp_path, monkeypatch, caplog):
+    """A real local write failure still says so — that wording was never wrong,
+    it was being used for the wrong event."""
+    def failing_open(*args, **kwargs):
+        raise OSError('no space left on device')
+
+    caplog.set_level(logging.INFO)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tcp_server, 'open', failing_open, raising=False)
+    monkeypatch.setattr(tcp_server.subprocess, 'run', lambda *a, **k: None)
+
+    tcp_server.data_queue.put(
+        ('10.0.0.9', datetime.datetime(2026, 5, 20, 14, 0, 0),
+         [[1, 2, 3, 4, 5, 6, 7, 8, BATTERY_MV]]))
+    tcp_server.data_queue.put(None)
+    tcp_server.save_data()
+
+    errors = [r.getMessage().lower() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any('failed to save' in m for m in errors), errors
+    assert not any('drive' in m for m in errors), errors
+
+
 @pytest.mark.parametrize('exc', COPY_FAILURES)
 def test_save_data_reports_the_drive_copy_failure(tmp_path, monkeypatch, caplog, exc):
     """It still has to be reported — as the copy failing, not the save."""

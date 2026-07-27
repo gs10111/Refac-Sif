@@ -564,7 +564,21 @@ Consequência que liga L1b a L1: o mesmo peer lento que segura um worker também
 
 ### L2 — Nada confirma que o device **agiu** sobre `update=1`
 
-Um `sendall` bem-sucedido prova que 10 bytes chegaram a um socket, e nada além disso. Se o device reiniciar ou falhar antes de o `Preferences.putBool` gravar, o armamento foi **gasto**, o histórico diz `OTA`, e nenhum AP aparece — a mesma falha de "operador caçando um AP fantasma" que o campo `ota_sent` foi criado para evitar, entrando por uma porta que não fechamos.
+Um `sendall` bem-sucedido prova que 10 bytes chegaram ao **kernel**, e nada além disso. Se o device reiniciar ou falhar antes de o `Preferences.putBool` gravar, o armamento foi **gasto**, o histórico diz `OTA`, e nenhum AP aparece — a mesma falha de "operador caçando um AP fantasma" que o campo `ota_sent` foi criado para evitar, entrando por uma porta que não fechamos.
+
+#### As três saídas de um armamento
+
+Não são duas, são três — e a terceira é a que nenhuma das duas metades enxerga sozinha:
+
+| Saída | Onde fica o armamento | Quem consegue detectar |
+|---|---|---|
+| `sendall` levanta `OSError` | **de volta no servidor** (`rearm_ota`), entrada de histórico com `ota_sent=False` | backend, e trata |
+| device recebe e grava o NVS | **só no device** — o backend já limpou o dele | ninguém confirma, mas o AP aparece |
+| `sendall` retorna OK e os bytes **não** chegam (reset, RST, link caindo depois do retorno) | **em lugar nenhum** | **ninguém** |
+
+Na terceira o sistema fica consistente por fora: o servidor limpou porque enviou, o device nunca gravou porque nunca recebeu, e nada está em contradição. O histórico diz `OTA`, nenhum AP sobe, e não existe estado divergente que alguém pudesse inspecionar. É a razão de a ordenação do lado firmware (confirmar o AP antes de limpar o flag) ser a única coisa entre nós e uma perda silenciosa — e é também o motivo de essa ordenação **não** fechar esta saída: o device nunca chegou a ter flag para ordenar.
+
+Só se fecha com **confirmação** — o device dizendo que agiu. Isso é mudança de fio e fica para a fase 2.
 
 **Hoje isso não é hipótese.** Verificado em 2026-07-27: `grep` por `update`, `Preferences`, `restart`, `softAP` e `WIFI_AP` em `src/` não retorna nada. O firmware refatorado recebe o campo e o guarda no struct, mas **nenhum código o lê**. Enquanto o lado embarcado não implementar a ação de OTA, armar pela interface é um no-op que consome o flag em silêncio. Não é defeito do backend — é as duas metades andando em ritmos diferentes —, mas se isso for demonstrado antes de o firmware chegar, vai parecer backend quebrado.
 
