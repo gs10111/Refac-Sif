@@ -31,12 +31,11 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 
 from protocol.packet import (
-    SAMPLE_SIZE_BYTES, HEADER_SIZE_BYTES, BATTERY_SIZE_BYTES,
-    SERVER_CONFIG_SIZE, SAMPLE_COLUMNS, CSV_COLUMNS,
+    SAMPLE_SIZE_BYTES, HEADER_SIZE_BYTES, BATTERY_SIZE_BYTES, CSV_COLUMNS,
     parse_sample, pack_server_config
 )
 from config.settings import (
-    SERVER_IP, SERVER_PORT, BUFFER_SIZE, GDRIVE_PATH,
+    SERVER_IP, SERVER_PORT, GDRIVE_PATH,
     CLIENT_TIMEOUT_SEC, MAX_PAYLOAD_BYTES, BATTERY_INVALID,
 )
 from app_state import AppState, ConnectionEntry
