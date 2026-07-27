@@ -26,6 +26,7 @@
 #include "cpu.h"
 #include "sleeper.h"
 #include "power_manager.h"
+#include "battery.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -274,9 +275,23 @@ static void test_timer_sleep_duration_is_sleep_min_times_60_million_microseconds
     TEST_ASSERT_EQUAL_UINT64(14400000000ULL, sleeper.microseconds());
 }
 
+// T49 — the battery conversion, pulled out of the Arduino layer so it can be
+// pinned. Production uses map(raw, 0, 4095, 0, 19803) at main.cpp:259-260. An
+// integer map from a zero origin is exactly multiply-then-divide, so the arithmetic
+// is equivalent — but that equivalence was verified by reading, and this is what
+// makes it verified by running.
+static void test_battery_conversion_matches_the_production_map(void)
+{
+    TEST_ASSERT_EQUAL_UINT16(0, battery_mv_from_raw(0));
+    TEST_ASSERT_EQUAL_UINT16(19803, battery_mv_from_raw(4095));
+    TEST_ASSERT_EQUAL_UINT16(9899, battery_mv_from_raw(2047));
+    TEST_ASSERT_EQUAL_UINT16(4831, battery_mv_from_raw(999));
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_battery_conversion_matches_the_production_map);
     RUN_TEST(test_timer_sleep_turns_the_radio_off_and_sleeps_the_imu_first);
     RUN_TEST(test_trigger_sleep_turns_the_radio_off_and_sleeps_the_imu_first);
     RUN_TEST(test_entering_acquisition_mode_turns_the_radio_off_then_drops_to_10mhz);

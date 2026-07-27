@@ -6,6 +6,7 @@
 #include "acquisition.h"
 #include "sample_store.h"
 #include "belt_cycle.h"
+#include "uploader.h"
 #include "belt_trigger.h"
 #include "ring_buffer.h"
 #include "../services/esp32_platform.h"

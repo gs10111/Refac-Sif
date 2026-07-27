@@ -120,24 +120,20 @@ void App::runCycleIteration()
     _power.enterTransmitMode();
     if (_wifi.connect(WIFI_SSID, WIFI_PASSWORD))
     {
-        if (_tcp.connect(SERVER_HOST, TCP_SERVER_PORT))
+        // Starts from the config in force, so a truncated or missing response
+        // leaves every field exactly as it was.
+        ServerConfig newConfig = serverConfig;
+
+        UploadOutcome upload = upload_acquisition(_tcp, SERVER_HOST, TCP_SERVER_PORT,
+                                                  *_ring, esp32_read_battery_mv(),
+                                                  newConfig);
+
+        if (upload.configReceived)
         {
-            // plan().first only. Correct and byte-identical to production while the
-            // ring has not wrapped; a wrapped ring needs both ranges sent in order,
-            // which is T45 in round 7.
-            ReadPlan plan = _ring->plan();
-            uint16_t batt = esp32_read_battery_mv();
-            ServerConfig newConfig;
-            if (_tcp.sendData(plan.first.ptr, plan.first.len, batt, newConfig))
-            {
-                serverConfig = newConfig;
-                _acq->setConfig(serverConfig);
-                _trigger.setCooldownSec(serverConfig.trigger_cooldown_sec);
-                // Only a successful send clears the buffer (main.cpp:264-265), so a
-                // failed transmit carries its data into the next attempt.
-                _ring->reset();
-            }
-            _tcp.disconnect();
+            serverConfig = newConfig;
+            _acq->setConfig(serverConfig);
+            _trigger.setCooldownSec(serverConfig.trigger_cooldown_sec);
+            _updateRequested = (newConfig.update != 0);
         }
     }
 
