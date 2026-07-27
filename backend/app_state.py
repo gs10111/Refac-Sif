@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from config.settings import (
     DEFAULT_SLEEP_MIN, DEFAULT_IDLE_MIN,
     DEFAULT_MAX_ACQ, DEFAULT_COOLDOWN_SEC, DEFAULT_UPDATE,
+    HISTORY_MAX_CONNECTIONS,
 )
 
 
@@ -35,7 +36,7 @@ class AppState:
 
     def __init__(self) -> None:
         self.config:      DeviceConfig          = DeviceConfig()
-        self.connections: deque[ConnectionEntry] = deque(maxlen=50)
+        self.connections: deque[ConnectionEntry] = deque(maxlen=HISTORY_MAX_CONNECTIONS)
         self.ota_armed:   bool                   = bool(DEFAULT_UPDATE)
         self.lock:        threading.Lock         = threading.Lock()
 

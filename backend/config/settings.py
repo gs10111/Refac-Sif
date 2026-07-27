@@ -19,6 +19,12 @@ MAX_PAYLOAD_BYTES = 1400000
 # never arrived — same sentinel the production server uses.
 BATTERY_INVALID = -1
 
+# Connection history depth. Under D1 a wake is up to max_acq acquisitions, each
+# its own connection and its own row: five sensors is ~25 rows per round, so
+# this holds about twenty rounds. What matters is not the number but how many
+# rounds the operator can still see the OTA row for.
+HISTORY_MAX_CONNECTIONS = 500
+
 DEFAULT_SLEEP_MIN      = 240
 DEFAULT_IDLE_MIN       =  20
 DEFAULT_MAX_ACQ        =   5

@@ -42,9 +42,8 @@ def test_connections_append_and_order():
     assert state.connections[0].n_samples == 10
 
 
-def test_connections_max_50():
-    state = AppState()
-    for i in range(60):
+def fill_history(state, n):
+    for i in range(n):
         with state.lock:
             state.connections.append(ConnectionEntry(
                 ip=f'10.0.0.{i}',
@@ -52,7 +51,31 @@ def test_connections_max_50():
                 n_samples=i,
                 battery_mv=3800,
             ))
-    assert len(state.connections) == 50
+
+
+def test_connections_capped_at_500():
+    """Sized against D1: a wake is up to max_acq=5 acquisitions, each its own
+    connection and its own row, so five sensors is ~25 rows per round. 500
+    holds about twenty rounds. The number that matters is not 500 — it is how
+    many rounds the operator can still see the OTA row for.
+
+    The literal is deliberate: reading the constant would only prove AppState
+    agrees with itself.
+    """
+    state = AppState()
+    fill_history(state, 510)
+    assert len(state.connections) == 500
+
+
+def test_connections_drop_the_oldest_first():
+    """The row that falls off must be the oldest one. If the buffer dropped
+    from the wrong end, the OTA record — the newest thing the operator needs —
+    would be the first to go."""
+    state = AppState()
+    fill_history(state, 510)
+
+    assert state.connections[0].n_samples  == 10   # 0..9 fell off
+    assert state.connections[-1].n_samples == 509
 
 
 def test_lock_is_threading_lock():
