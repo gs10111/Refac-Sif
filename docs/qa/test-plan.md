@@ -32,6 +32,82 @@ A behaviour that fits none of the three is out of scope and must be escalated, n
 implemented. **A test that pins a behaviour with no justification is itself a
 defect** — it freezes an unreviewed decision into the suite.
 
+**And the class itself is a claim that can be wrong.** A39b — the `update=0` disarm —
+was carried as a fidelity fix on the reasoning *"we introduced the latch so we owe it a
+bound"*. That reads as preserving original behaviour and it preserves nothing: we built
+the latch **and** its bound, and production has neither. It is a **new-feature**, ruled
+as such after the fact.
+
+The tell is worth reusing: **a fidelity fix can always name the original behaviour it
+restores, with a line number.** If the justification is a chain of reasoning about why
+the change is necessary, it is a feature — necessity is not fidelity.
+
+**The mechanical form, which is what makes it checkable rather than a judgement call:**
+
+> A fidelity fix cites what production **does**. A feature cites what production does
+> **not** do, and argues from there.
+
+Applied retroactively across the branch, ten signed fidelity fixes each name a
+behaviour — the teardown at `main.cpp:248-251`, the battery sampling point at `:259`,
+the ring cleared once connected at `:264-265`, the timestamp before the SPI burst at
+`ICM42688P.cpp:371`, the halt at `main.cpp:61-62`, radio-off at `:300-301`, the IMU woken
+once per boot at `:114`, the AP before the clear at `:78`, the idle timeout at
+`ICM42688P.cpp:436`, the 5 s WiFi timeout at `:191`.
+
+**The disarm cites `main.cpp:282` to say there is no `else`** — an *absence*. That is the
+single exception on the branch, and it is the one that turned out to be a feature.
+
+The retired sentence fails the test outright: *"we introduced the latch, so we owe it a
+bound"* names no behaviour and cites no line at all. A debt argument is a feature
+argument.
+
+**A reclassification is not finished when the document changes.** The retired
+justification is usually written in several places, and the one nearest the code wins
+for anyone who opens the file rather than the doc — the same distance-from-the-
+consequence problem as the guard comments. So the last step is a `grep` for the
+**retired sentence**, not an edit to the document:
+
+```
+grep -rn "owe it a bound" lib/ src/ test/ docs/       # not backend/.venv — not our tree
+```
+
+Here that returns `test/test_ota/test_ota.cpp:17-18` — the header of the suite testing
+the very behaviour, still framing it as *owed* and therefore as forced rather than
+chosen. Keep the question, not the artefact: the classification goes stale, the grep for
+its predecessor does not.
+
+**The pass condition is not empty output, and cannot be.** Correcting a framing *out
+loud* — the practice used throughout this branch — means the retired sentence survives
+wherever it is quoted in order to be withdrawn. This section is itself a hit, by
+construction, and so is the corresponding passage in `docs/backend`. So:
+
+> **A non-empty result is not a failure. It is a list to read.** The check passes when
+> every hit is either a correction or a file already updated — never when the output is
+> empty.
+
+Same shape as the `comm -3` problem above: the pass value and a real hit are
+indistinguishable until a human looks. A check whose stated pass condition is
+unreachable gets recorded as "run and passed" by whoever runs it next.
+
+**And match the text you actually mean.** Broadening this to `owe.*bound` to catch
+paraphrases matched `lower_bound` sixty-odd times across `backend/.venv` — pygments,
+numpy, rich — burying the three real lines. The literal sentence and its Portuguese
+translation are the whole pattern.
+
+**And that grep is what makes duplication safe.** Two homes for one statement is how the
+disarm ended up with two framings — so the instinct to cross-reference instead of
+duplicating is sound. But a cross-reference only helps a reader who already knows why the
+referent matters, which is the same objection as the guard comments. The two concerns
+resolve on **what is being copied**:
+
+| Copied thing | Safe to duplicate? |
+|---|---|
+| A **decision** — revisable, and its revision is the event | **No.** Duplicate it and one copy will be revised. This is exactly what happened to the disarm. |
+| A **rule or test** — stable, short, self-contained, and useless as a pointer | **Yes**, provided a revision ends with a grep for the retired wording. |
+
+The discipline, not the copy count, is what keeps them consistent. Duplicate freely where
+you would run that grep; cross-reference where you would not.
+
 ### Accepted production behaviour — not defects, do not "fix"
 
 | # | Behaviour | Where in the original | Ruling |
@@ -124,7 +200,9 @@ defect** — it freezes an unreviewed decision into the suite.
 
 | # | Criterion | Status | Test / note |
 |---|---|---|---|
-| A39 | `update=1` → `Preferences("config").putBool("update", true)` → `ESP.restart()`. | **open** | `app.cpp:55` hardwires `otaFlagSet = false`. Decision table ready (`test_server_update_flag_routes_to_restart`, `test_ota_flag_at_boot_routes_to_ota_before_any_acquisition`); nothing in `src/` acts on it. |
+| A39 | `update=1` → persist the flag → `ESP.restart()`. | host | `apply_update_field`, `test_server_update_flag_routes_to_restart`, `test_ota_flag_at_boot_routes_to_ota_before_any_acquisition`. Landed in round 9. |
+| **A39b** | **`update=0` DISARMS a set flag.** | host — **`new-feature`, ruled by bigboss** | **Justification class matters here and was wrong at first.** Production `main.cpp:282` has no `else`: `update=0` is inert, and no latent flag can exist because the original always clears on boot. So this is **not** a fidelity fix — it preserves nothing. It was signed as *"we introduced the latch so we owe it a bound"*, which framed it as restoring original behaviour; we built **both** the latch and its bound. Recorded as a feature so a future reader can weigh it. **Why it stays:** without it, a device whose AP bring-up keeps failing holds the flag indefinitely and can walk into AP mode at an arbitrary future wake — weeks later, no operator present, a five-minute window opening to an empty plant, sensor off the network until it times out. The disarm trades that for a request discarded **promptly and visibly** while the operator is still at the desk. Prompt-and-visible beats latent. Note what it is *not*: the operator's intent is **not** honoured. Guarded by `mutant_disarm_writes_unconditionally` (write only on the transition). |
+| **A39c** | Nothing may transmit between an arming and the OTA boot. | host | **This requirement exists only because A39b exists.** Production cannot have it — with an inert `update=0` there is nothing to protect. A device that transmitted first would collect `update=0` and clear the flag it had just taken. Defended by T21b. **Anyone reversing A39b removes A39c in the same motion**; they are one decision, not two. |
 | A40 | The flag survives `ESP.restart()` via NVS. | **open / HW** | H7. Today a claim, not a test. Tooling question Q1. |
 | A41 | On the next boot the flag is **cleared first**, then the AP comes up: `WIFI_AP`, SSID `Update driver - <MAC>`, password `12345678`. Cleared-first means a crashed OTA cannot loop. | **open / HW** | H8. matches-original `main.cpp:74-99`. |
 | A42 | The AP serves `updatePage` on port 80 with `/update`, `/version`, `/restartESP`; 5 min timeout then restart. | **open / HW** | H8. matches-original `main.cpp:347-405`. |

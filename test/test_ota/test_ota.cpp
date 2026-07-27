@@ -14,11 +14,39 @@
 // exactly as written.
 //
 // Clause 1 of the contract adds the other half: update=0 is a DISARM, not silence
-// as it is in production (main.cpp:282 has no else). We introduced the latch by
-// keeping the flag set on failure, so we owe it a bound.
+// as it is in production (main.cpp:282 has no else).
+//
+// IT IS A NEW FEATURE, NOT A FIDELITY FIX, and the distinction is load-bearing.
+// Production has no latent flag to bound: it always clears on boot. We built both
+// the latch — by keeping the flag set when the AP fails to come up — and the bound
+// for it. Neither preserves anything the original did.
+//
+// The check that decides it, so this classification can be tested rather than
+// taken: A FIDELITY FIX CAN ALWAYS NAME THE ORIGINAL BEHAVIOUR IT RESTORES, WITH A
+// LINE NUMBER. A justification that argues why the change is NECESSARY is a
+// feature — necessity is not fidelity.
+//
+// The tell is visible in the citation itself. Look at the line above: it cites
+// main.cpp:282 to say there is NO ELSE. A fidelity fix cites what production DOES;
+// a feature cites what production does NOT do and argues from there. That is what
+// makes this mechanical rather than a judgement call, and it is what nobody ran
+// before this clause was first signed as a fidelity fix.
+//
+// The trade, stated so a reader can weigh it rather than accept it: without the
+// bound, a device whose bring-up keeps failing holds the flag indefinitely and can
+// walk into AP mode at an arbitrary future wake — weeks later, no operator present,
+// the five-minute window opening and closing to an empty plant, the sensor off the
+// network until it times out. With it, the request is discarded promptly and
+// visibly while the operator is still at the desk. Prompt and visible beats latent.
 //
 // Read the disarm honestly: it does not honour the operator's request, it discards
 // it cleanly. Lost better, not honoured.
+//
+// CLAUSE 2 EXISTS ONLY BECAUSE CLAUSE 1 DOES. Nothing may transmit between
+// receiving update=1 and the OTA boot, because that transmission would carry
+// update=0 and clear the flag it had just taken. Production cannot have this
+// requirement — its update=0 is inert. T21b in test_belt_cycle defends it.
+// Reversing clause 1 removes clause 2 in the same motion: one decision, not two.
 
 #include <unity.h>
 #include <stdint.h>

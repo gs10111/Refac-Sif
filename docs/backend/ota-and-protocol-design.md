@@ -293,7 +293,13 @@ Saíram da leitura conjunta entre as duas metades. Nenhuma muda o layout: contin
 
 Ao receber uma config com `update == 0`, se o flag persistido estiver ligado, o device o **apaga**. Lê antes de escrever: uma gravação em NVS na transição, nenhuma em regime.
 
-Isto é **desvio deliberado do original**, onde `main.cpp:282` age em `if (response.update)` sem `else` e o 0 é silêncio. A justificativa não é "é melhor": é que já aceitamos um desvio que **cria** o problema que este resolve. Manter o flag ligado quando o Access Point falha a subir é escolha nossa — o original sempre limpa no boot e por isso não tem caso de flag latente. Tendo criado a trava, devemos a ela um limite.
+> **CLASSIFICAÇÃO CORRIGIDA (bigboss, 2026-07-27): isto é FEATURE NOVA, não correção de fidelidade.** A cláusula foi assinada primeiro com a justificativa "criamos a trava, devemos a ela um limite", o que a enquadrava como preservação de comportamento original. **Não preserva nada.** A produção não tem caso de flag latente porque **sempre limpa no boot** (`main.cpp:81`); nós construímos a trava **e** o limite dela. Registrado assim para que um leitor futuro possa **pesar** a decisão em vez de supor que ela foi forçada.
+
+Desvio explícito do original, onde `main.cpp:282` age em `if (response.update)` sem `else` e o 0 é silêncio.
+
+**Como a classificação errada seria pega, e dá para ver de relance nesta própria cláusula:** ela cita `main.cpp:282` para dizer que **não existe `else`** — cita uma **ausência**. Correção de fidelidade cita o que a produção **faz**, com número de linha; feature cita o que a produção **não faz** e argumenta a partir dali. Necessidade não é fidelidade, e uma citação de ausência é o indício. *(A regra geral é processo e mora em `docs/qa/test-plan.md`, seção 0 — o que fica aqui é a aplicação dela a esta cláusula, que é fato sobre esta decisão e não pode divergir de lá.)*
+
+**Por que fica, como decisão de produto:** sem o desarme, um device cujo Access Point falha repetidamente segura o flag indefinidamente e pode entrar em modo AP num wake arbitrário — semanas depois, sem operador presente, janela de cinco minutos abrindo e fechando para uma planta vazia, e o sensor fora da rede até expirar. O desarme troca isso por um pedido descartado **pronta e visivelmente**, com o operador ainda na mesa. **Pronto-e-visível ganha de latente**, e esse é o argumento inteiro.
 
 Limite melhor que o contador descartado: contador para de tentar e deixa um device que nunca atualiza; o desarme devolve o device a um estado conhecido na próxima transmissão comum.
 
@@ -304,6 +310,8 @@ Limite melhor que o contador descartado: contador para de tentar e deixa um devi
 #### Cláusula 2 — o device **não pode transmitir** entre receber `update=1` e entrar no boot de OTA
 
 Vira **requisito** do contrato, e não mais efeito colateral aceito da D3.
+
+> **Esta restrição foi FABRICADA pela cláusula 1 e a produção não pode tê-la.** Ela existe apenas porque `update=0` passou a significar alguma coisa; sem o desarme não há o que uma transmissão intermediária destrua. Consequência para quem vier: **reverter a cláusula 1 remove a cláusula 2 no mesmo movimento** — e com ela o `T21b` como defensor de restrição, o comentário no ponto do restart, e uma regra que um refactor poderia quebrar em silêncio. As duas opções não diferem por um comportamento: manter é ficar com uma feature **mais** uma restrição que o original nunca teve; remover leva o contrato de três cláusulas para uma, mais a cláusula 3, que é independente.
 
 Sob a cláusula 1, uma transmissão nesse intervalo colhe `update=0` e **desarma o flag que o device acabou de receber**. O OTA nunca aconteceria, e o sintoma apareceria no backend parecendo bug de servidor.
 
@@ -634,7 +642,11 @@ Na terceira o sistema fica consistente por fora: o servidor limpou porque enviou
 
 Só se fecha com **confirmação** — o device dizendo que agiu. Isso é mudança de fio e fica para a fase 2.
 
-**Hoje isso não é hipótese.** Verificado em 2026-07-27: `grep` por `update`, `Preferences`, `restart`, `softAP` e `WIFI_AP` em `src/` não retorna nada. O firmware refatorado recebe o campo e o guarda no struct, mas **nenhum código o lê**. Enquanto o lado embarcado não implementar a ação de OTA, armar pela interface é um no-op que consome o flag em silêncio. Não é defeito do backend — é as duas metades andando em ritmos diferentes —, mas se isso for demonstrado antes de o firmware chegar, vai parecer backend quebrado.
+**Histórico desta nota, porque ela já foi verdadeira e deixou de ser.** Escrita em 2026-07-27 sobre um `grep` que naquele momento não achava `update`, `Preferences`, `restart`, `softAP` nem `WIFI_AP` em `src/`: o firmware recebia o campo, guardava no struct e **nenhum código o lia**, então armar pela interface era um no-op que consumia o flag em silêncio.
+
+**A rodada 9 fechou isso.** Mesmo `grep`, mesma árvore, hoje: `lib/ota/ota_arming.cpp` implementa `enter_ota_if_armed` e `apply_update_field`, `src/app/app.cpp:40` chama o primeiro no boot, `:133` propaga `outcome.updateRequested`, e há `ESP.restart()` nos caminhos de OTA. A ação existe.
+
+**O que a L2 continua afirmando, e não depende disso:** nada confirma que o device **agiu**. A ação existir torna o caminho feliz real; não cria confirmação nenhuma. As três saídas da tabela acima seguem valendo, e a terceira — armamento em lugar nenhum — continua indetectável pelas duas metades.
 
 Duas formas candidatas para quando for a hora (nenhuma projetada agora, ambas custam mudança de fio + handshake no firmware):
 - **armamento confirmado pelo device**: o device responde algo antes de reiniciar, e só então o servidor limpa;
