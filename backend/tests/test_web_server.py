@@ -377,6 +377,9 @@ def test_index_shows_the_last_device_that_took_the_ota(client):
 
 
 def test_index_shows_no_last_ota_when_none_was_ever_sent(client):
+    """BORROWED SAFETY: an empty response body satisfies this too. What makes it
+    mean something is test_index_shows_the_last_device_that_took_the_ota, which
+    asserts the same string IS rendered when an entry took the flag."""
     c, state = client
     add_entry(state, ip='192.168.1.5', ota_sent=False)
 
@@ -422,6 +425,9 @@ def test_history_marks_the_entry_that_took_the_ota(client):
 
 
 def test_history_does_not_mark_a_normal_entry(client):
+    """BORROWED SAFETY: an empty body, or a template that stopped rendering rows
+    at all, satisfies both assertions. test_history_marks_the_entry_that_took_the_ota
+    is what proves the markup appears when it should."""
     c, state = client
     add_entry(state, ota_sent=False)
 

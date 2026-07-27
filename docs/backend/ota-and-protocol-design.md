@@ -708,6 +708,10 @@ A terceira linha é a que se esquece. Uma asserção de vazio-passa — `assert 
 
 Mesmo remédio da **L6** e do `A27b` no firmware, pelo mesmo motivo — teste cujo valor depende de algo fora dele. Três instâncias de um conserto só nas duas metades é argumento melhor que qualquer uma isolada.
 
+**Como escrever o comentário: nomeie o que quebra, não o que preservar.** Referência cruzada (*"veja o teste X"*) só ajuda quem já sabe por que aquilo importa. Descrever o mecanismo — *esta asserção é satisfeita por um helper que sempre devolve vazio; o teste Y é o que a torna significativa; sem ele esta aqui segue verde guardando nada* — deixa o risco derivável por quem nunca ouviu falar de segurança emprestada. Vale para todo `DO NOT REMOVE` que escrevemos hoje.
+
+**Quando anotar:** em proporção a **quantos** testes emprestam a metade positiva. Um único emprestador é frágil — uma faxina o apaga. Uma dúzia não é: a faxina que remove os doze não é faxina. Anotei os quatro casos com emprestador **único e nomeável**; deixei sem anotação os que tomam emprestado de muitos, e os autocontidos, onde as duas metades estão no mesmo teste e ler o teste basta.
+
 ### 8.2 Contagens falham pior que vazios
 
 O caso vazio-passa é ruim; **igualdade entre contagens é pior**:
@@ -722,6 +726,10 @@ E o agravante não é a aritmética, é a **correlação**: as três verificaç�
 Caso de sanidade precisa das **duas metades**:
 - **positiva** — cada padrão tem de casar com algo: toda contagem `> 0`, não só igual;
 - **negativa** — entrada deliberadamente errada tem de produzir o valor de **falha**.
+
+E a metade negativa **não é redundante**: contagem não-zero prova apenas que o padrão casou com **alguma coisa**, não que casou com a coisa pretendida. Padrão quebrado que por acaso conta outra coisa passa na metade positiva sem tropeço. Sem o controle negativo, `12` e "o padrão está quebrado de um jeito que conta outra coisa" são a **mesma observação**.
+
+Colocado onde pertence: isto é a **regra do próprio arcabouço, um nível acima**. Exigimos desde a rodada 4 que a primeira execução de uma mutação nova **falhe** — e não exigíamos nada equivalente dos greps que verificam as mutações. Foi por isso que quatro deles quebraram numa tarde e dois produziram saída limpa idêntica a partir de bugs diferentes. Verificação conferida das três formas é o equivalente, em shell, de um teste vermelho antes do verde.
 
 ### 8.3 O caso que motivou a regra
 

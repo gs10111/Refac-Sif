@@ -629,7 +629,12 @@ def test_save_data_keeps_the_csv_when_the_drive_copy_fails(tmp_path, monkeypatch
 @pytest.mark.parametrize('exc', COPY_FAILURES)
 def test_save_data_does_not_report_a_save_failure_when_only_the_copy_failed(
         tmp_path, monkeypatch, caplog, exc):
-    """The data is on disk — saying it was not is the actual bug."""
+    """The data is on disk — saying it was not is the actual bug.
+
+    BORROWED SAFETY: an empty caplog satisfies this too. The positive
+    counterpart is test_save_data_reports_the_drive_copy_failure, which asserts
+    a record IS captured from the same path.
+    """
     caplog.set_level(logging.INFO)
 
     save_with_failing_copy(tmp_path, monkeypatch, exc)
@@ -663,6 +668,10 @@ def test_save_data_does_not_copy_to_drive_when_the_local_write_fails(tmp_path, m
     more confusing error about a path that does not exist. This test is the only
     thing covering that branch — every other B6 test takes the write-succeeded
     path.
+
+    BORROWED SAFETY: `copy_calls == []` would also be satisfied by a recorder
+    that never appends. test_save_data_copies_to_the_gdrive_path_and_checks_the_exit_code
+    is what proves the recorder works — it reads calls[0].
     """
     copy_calls = []
 

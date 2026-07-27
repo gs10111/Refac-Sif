@@ -347,6 +347,21 @@ This is why "to be checked, not believed" is not hedging. It is the only form in
 an observation of a moving subject carries its full weight, because the half that can
 be wrong is separated from the half that cannot.
 
+**And the third piece is provenance, which is what makes a number auditable after the
+fact:** whoever posts a measurement states **who ran it** and **against which tree
+state**.
+
+> *gomi ran the backend suite, tree clean at `a06a3c5`, 129 / 115.*
+
+Three investigations in one afternoon went into numbers taken mid-edit, and in every
+case the missing information was not who was *allowed* to run it — it was *when*. A
+number with an author and a tree state can be re-derived or discarded on inspection; a
+number without one is an artefact whoever produced it.
+
+Note what this is **not**: a restriction on who may run things. Reading a tree cannot
+corrupt it, and a second party running someone else's prediction is *stronger* evidence
+than the author confirming their own claim. Ownership governs editing, not measuring.
+
 Concretely for this tool: **a mutation run and its survivor diff must happen against a
 tree nobody is editing.** Given the classification-drift finding above, mutmut is
 already sensitive to conditions outside the code; adding an unstable tree to that
@@ -375,6 +390,28 @@ The third part is the same remedy as the `DO NOT REMOVE` notes on A27b and on th
 `recv_exact` byte-count test, for the same reason: a test whose value depends on
 something outside itself is invisible at the point of reading. Three instances of one
 fix across two halves of the codebase is a better argument than any of them alone.
+
+**Write those notes to name what breaks, not what to preserve.** A cross-reference —
+*"needed by X, do not delete"* — only helps a reader who already knows why X matters. A
+note that states the **mechanism** — *every value assertion in this suite passes whether
+the ADC is read before or after the upload, so deleting this test reverts the sampling
+point silently* — lets a reader who has never heard of the concept derive the risk from
+the text in front of them. The first defends against the careless; the second defends
+against the uninformed, who are far more common and are usually acting in good faith
+while tidying up.
+
+**Distance from the consequence predicts which comments need it.** Audited against the
+nine guard comments on this branch, eight already named their failure and the one that
+did not is the *adapter* — a note on an interface method stating the rule (*the flag
+must not be spent until the page is reachable*) while what actually breaks lives one
+file away: an operator joins a network, finds no page, and the arming is gone from both
+halves with nothing able to reconstruct it. The reader who would "simplify" a bool that
+is always true arrives at the adapter, sees a rule with no consequence attached, and has
+no reason to look further.
+
+So the rule is not "spell out the mechanism everywhere". It is: **spell it out wherever
+the guard and the failure live in different files.** Where they sit together, the code
+below the comment already says it.
 
 **And the equality form fails worse than the empty form — including the one proposed in
 this document.** I recommended
