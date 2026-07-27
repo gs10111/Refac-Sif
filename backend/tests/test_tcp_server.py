@@ -1,6 +1,8 @@
 import csv
+import logging
 import socket
 import struct
+import subprocess
 import datetime
 from unittest.mock import MagicMock
 
@@ -321,10 +323,14 @@ def test_handle_client_queues_nothing_when_payload_is_truncated():
 # read these column names. (B5 / DEC-3)
 # --------------------------------------------------------------------------
 
-def run_save_data_once(tmp_path, monkeypatch, ip, timestamp, rows):
-    """Run save_data over a single queued item and return the file it wrote."""
+def run_save_data_once(tmp_path, monkeypatch, ip, timestamp, rows, copy=None):
+    """Run save_data over a single queued item and return the file it wrote.
+
+    copy replaces subprocess.run, so the test never shells out to gio and can
+    simulate the Google Drive copy failing.
+    """
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(tcp_server.subprocess, 'run', lambda *a, **k: None)
+    monkeypatch.setattr(tcp_server.subprocess, 'run', copy or (lambda *a, **k: None))
 
     tcp_server.data_queue.put((ip, timestamp, rows))
     tcp_server.data_queue.put(None)  # sentinel — stops the worker loop
@@ -504,3 +510,65 @@ def test_save_data_writes_the_battery_in_the_last_column(tmp_path, monkeypatch):
 
     assert len(row) == len(header)
     assert row[-1]  == str(BATTERY_MV)
+
+
+# --------------------------------------------------------------------------
+# A failed Google Drive copy is not a failed save. (B6)
+# The gvfs mount is routinely absent and gio may not be installed at all; the
+# CSV is on local disk either way and the operator must not be told otherwise.
+# --------------------------------------------------------------------------
+
+COPY_FAILURES = [
+    subprocess.CalledProcessError(1, 'gio'),  # gvfs mount missing / copy refused
+    FileNotFoundError('gio'),                 # gio not installed
+]
+
+
+def raising_copy(exc):
+    def _run(*args, **kwargs):
+        raise exc
+    return _run
+
+
+def save_with_failing_copy(tmp_path, monkeypatch, exc):
+    return run_save_data_once(
+        tmp_path, monkeypatch,
+        '10.0.0.9', datetime.datetime(2026, 5, 20, 14, 0, 0),
+        [[1, 2, 3, 4, 5, 6, 7, 8, BATTERY_MV]],
+        copy=raising_copy(exc),
+    )
+
+
+@pytest.mark.parametrize('exc', COPY_FAILURES)
+def test_save_data_keeps_the_csv_when_the_drive_copy_fails(tmp_path, monkeypatch, exc):
+    written = save_with_failing_copy(tmp_path, monkeypatch, exc)
+
+    assert written.exists()
+    with written.open(newline='', encoding='utf-8') as f:
+        rows = list(csv.reader(f))
+    assert rows[0]     == ORIGINAL_CSV_HEADER
+    assert len(rows)   == 2
+    assert rows[1][-1] == str(BATTERY_MV)
+
+
+@pytest.mark.parametrize('exc', COPY_FAILURES)
+def test_save_data_does_not_report_a_save_failure_when_only_the_copy_failed(
+        tmp_path, monkeypatch, caplog, exc):
+    """The data is on disk — saying it was not is the actual bug."""
+    caplog.set_level(logging.INFO)
+
+    save_with_failing_copy(tmp_path, monkeypatch, exc)
+
+    messages = [r.getMessage().lower() for r in caplog.records]
+    assert not any('failed to save' in m for m in messages), messages
+
+
+@pytest.mark.parametrize('exc', COPY_FAILURES)
+def test_save_data_reports_the_drive_copy_failure(tmp_path, monkeypatch, caplog, exc):
+    """It still has to be reported — as the copy failing, not the save."""
+    caplog.set_level(logging.INFO)
+
+    save_with_failing_copy(tmp_path, monkeypatch, exc)
+
+    errors = [r.getMessage().lower() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert any('drive' in m for m in errors), errors

@@ -61,15 +61,28 @@ def save_data():
         ip, timestamp, samples = item
         filename = f"{ip}_{timestamp.strftime('%Y%m%d_%H%M%S')}.csv"
         try:
-            with open(filename, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.writer(f)
-                writer.writerow(CSV_COLUMNS)
-                writer.writerows(samples)
-            destino = os.path.join(GDRIVE_PATH, filename)
-            subprocess.run(["gio", "copy", filename, destino], check=True)
-            logging.info(f"Saved and copied {filename}")
-        except Exception as e:
-            logging.error(f"Failed to save {filename}: {e}")
+            saved = False
+            try:
+                with open(filename, 'w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(CSV_COLUMNS)
+                    writer.writerows(samples)
+                saved = True
+                logging.info(f"Saved {filename}")
+            except Exception as e:
+                logging.error(f"Failed to save {filename}: {e}")
+
+            # The Drive copy is a separate concern: the gvfs mount is routinely
+            # absent and gio may not be installed at all. Neither means the CSV
+            # was lost — it is on local disk, and saying otherwise sends the
+            # operator looking for data that is not missing.
+            if saved:
+                try:
+                    destino = os.path.join(GDRIVE_PATH, filename)
+                    subprocess.run(["gio", "copy", filename, destino], check=True)
+                    logging.info(f"Copied {filename} to Google Drive")
+                except Exception as e:
+                    logging.error(f"Failed to copy {filename} to Google Drive: {e}")
         finally:
             data_queue.task_done()
 
