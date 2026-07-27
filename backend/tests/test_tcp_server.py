@@ -373,7 +373,14 @@ def test_handle_client_queues_rows_with_invalid_battery_when_battery_is_missing(
 
 def test_handle_client_queues_nothing_when_payload_is_truncated():
     """Peer vanished mid-payload: no config, no history entry, nothing saved —
-    the same data outcome as the production server, minus the crashed worker."""
+    the same data outcome as the production server, minus the crashed worker.
+
+    BORROWED SAFETY: `queued_rows() == []` is an empty-pass assertion — a
+    queued_rows() that always returned [] would satisfy it. What makes it mean
+    something is test_handle_client_queues_rows_with_the_battery_column, which
+    exercises the same helper positively. If that test goes, this one keeps
+    passing against a broken helper and guards nothing.
+    """
     state  = AppState()
     header, body, _ = make_recv_sequence(n_samples=4)
     conn   = MagicMock()

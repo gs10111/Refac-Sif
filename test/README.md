@@ -134,6 +134,72 @@ Each flag is documented at the `#ifdef` that implements it. Rules:
   different one — but the table must not imply every assertion earns its place
   against every flag.
 
+## A check that can pass by breaking
+
+Every invariant check below reports a *pass value*. Ask what happens when the check
+itself is wrong, because for most of them a broken check produces the pass value:
+
+- `comm -3 ...` passes on **empty**. A pattern that matches nothing is also empty.
+- The three counts pass on **equality**. A pattern family that breaks the same way in
+  all three gives `0 == 0 == 0`, which reads as pass on a tree with no mutations
+  wired at all.
+
+The second is the dangerous one, and it is dangerous *because the three checks are
+correlated*: they share a pattern family and get edited together — all three were
+edited here in one commit. Independent checks degrade to a mismatch, which is
+visible. Correlated ones degrade to agreement, which is not. Correlation is what
+turns three measurements back into one.
+
+This has already happened, twice on the same line. The README row count was attempted
+three times by two people and returned **0, 0, 12** — two different bugs (a pattern
+matching a text shape the table does not have; a backtick inside a double-quoted
+`$( )` opening a command substitution and eating the pattern), identical output.
+Neither became a finding only because both reporters posted the broken *pattern*
+rather than the number, which is not a property a process can rely on.
+
+So each check needs two halves:
+
+- **positive** — the pattern must match something. Assert each count is `> 0`, not
+  only that the three agree.
+- **negative** — a deliberately wrong input must produce the *fail* value, which
+  catches a pattern matching nothing for a reason unrelated to the tree.
+
+### Where the sanity case has to live
+
+The same shape appears inside test suites, and there it is often already covered — by
+structure rather than by design:
+
+| | positive counterpart | consequence |
+|---|---|---|
+| standalone shell check | none available | must carry its own sanity case inline |
+| suite assertion | may borrow one from another test | safe *while that test exists* |
+
+An empty-pass assertion — `queued_rows() == []`, `bytesWritten() == 0` — is safe when
+some other test exercises the same helper positively, because a broken helper fails
+*there*. That safety is real, and it is invisible at the point of reading.
+
+**Borrowed safety must be written down at the borrower.** The counterpart looks like a
+redundant happy-path test; delete it in a tidy-up and the empty-pass assertion keeps
+passing, now guarding nothing, with no diff showing that its meaning changed.
+
+```
+test_..._queues_nothing_when_payload_is_truncated
+    # Safe only because test_..._queues_rows_with_the_battery_column exercises
+    # queued_rows() positively. If that test goes, this one passes against a
+    # broken helper.
+```
+
+The rule in three parts:
+
+- **standalone check** — carries its own sanity case inline
+- **suite assertion** — may borrow a positive counterpart from another test
+- **borrowed safety** — must be written down at the borrower, or it is one tidy-up
+  from gone
+
+This is the same remedy as A27b's DO-NOT-REMOVE comment and as L6 on the backend —
+three instances across both halves of one defect: **a test whose value depends on
+something outside itself, invisible at the point of reading.**
+
 ## Predict catchers, never a pass count
 
 A count of test declarations is not a prediction of a test outcome, and the two look

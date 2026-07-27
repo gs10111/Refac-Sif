@@ -352,6 +352,66 @@ tree nobody is editing.** Given the classification-drift finding above, mutmut i
 already sensitive to conditions outside the code; adding an unstable tree to that
 makes the output unfalsifiable rather than merely noisy.
 
+#### Every check needs a sanity case, and the equality form needs two
+
+A check that cannot fail is the same defect as a test that cannot fail — and checks get
+written in shell, where the failure is far easier to reach. In one afternoon, four
+invariant `grep`s were themselves broken: two counted words rather than declarations,
+one matched a text shape the target does not have, and one had a backtick inside a
+double-quoted `$( )` so the shell ate the pattern. **The README row check was attempted
+three times by two people and returned 0, 0, 12 — with two *different* bugs producing
+identical output.** Neither became a finding only because both authors reported the
+broken pattern instead of the number. That does not scale.
+
+The rule, in three parts:
+
+| Kind | Requirement |
+|---|---|
+| **Standalone check** | carries its own sanity case inline — it must demonstrate it *can* fail |
+| **Suite assertion** | may borrow a positive counterpart from another test |
+| **Borrowed safety** | must be written down **at the borrower**, or it is one tidy-up from gone |
+
+The third part is the same remedy as the `DO NOT REMOVE` notes on A27b and on the
+`recv_exact` byte-count test, for the same reason: a test whose value depends on
+something outside itself is invisible at the point of reading. Three instances of one
+fix across two halves of the codebase is a better argument than any of them alone.
+
+**And the equality form fails worse than the empty form — including the one proposed in
+this document.** I recommended
+
+```
+comm -3 <(grep -rho 'MUTANT_[A-Z][A-Z_]*' lib/ | sort -u) \
+        <(grep -o  'MUTANT_[A-Z][A-Z_]*' platformio.ini | sort -u)     # empty = pass
+```
+
+If the *pattern* breaks, **both** sides return nothing, `comm` returns nothing, and the
+check reports PASS. Worse for a counts version: `flags 0 / envs 0 / rows 0` satisfies
+the equality outright. Three checks that share a pattern family and get edited together
+degrade to **agreement**, not to mismatch — which silently turns three independent
+measurements into one.
+
+So an equality check needs a **positive half as well as a negative one**: assert the
+sets agree *and* that the count is the number you expect and non-zero. Agreement alone
+cannot distinguish "everything matches" from "nothing was found", and those are opposite
+results wearing the same output.
+
+**The positive half is still not sufficient, and the missing piece is a negative
+control.** A non-zero count only proves the pattern matched *something* — not that it
+matched the thing you meant. Run the check once against a token you know is absent and
+confirm it can still return its failure value:
+
+```
+grep -cE '^\[env:mutant_THIS_DOES_NOT_EXIST' platformio.ini     # must be 0
+```
+
+Without that, `12` and *"the pattern is broken in a way that happens to count something
+else"* are the same observation. This is the mutation harness's own rule — *the first
+run of a new mutation must FAIL* — applied to the checks instead of to the code, and it
+is the half that was missing from every one of the four broken `grep`s.
+
+A check verified with all three halves — agrees, counts what it should, and can still
+fail — is the shell equivalent of a red test before a green one.
+
 Two things follow. The mistake is not about carelessness with lines of code: it is
 categorising by resemblance, and it operates on strategies and predictions as readily
 as on `grep` patterns. And it is the strongest evidence in this document for the

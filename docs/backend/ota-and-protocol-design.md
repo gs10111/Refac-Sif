@@ -689,3 +689,42 @@ Ponto único de falha **eliminado**, não mitigado: hoje dois testes independent
 > Exemplo que fecha o argumento: `conn.recv(remaining)` escrito como `conn.recv(n)`. Deslize humano comum, lê bem, quebra toda leitura fragmentada — e o `mutmut` não o gera, porque seus operadores invertem comparações, ajustam números e anulam nomes, mas não **substituem um local por outro**. Passa na suíte de mocks inteira. Falha contra socket real.
 >
 > Daí a formulação geral: nota de mutação mede se as **asserções** sustentam peso, não se os **dublês** são fiéis. Uma suíte de asserções perfeitas contra um mock que mente pontua 100%. E o corolário incômodo: julgado por mutantes mortos, o teste de integração seria cortado — ferramenta que pontua testes sempre subestima o teste que conserta as ferramentas.
+
+---
+
+## 8. Verificações que passam por estarem quebradas
+
+Extraído da rodada 9, das duas metades, e vale além deste projeto.
+
+### 8.1 A regra em três partes
+
+| Tipo | Obrigação |
+|---|---|
+| Verificação avulsa (shell, grep, invariante) | carrega o **próprio caso de sanidade**, inline |
+| Asserção dentro de suíte | **pode** tomar emprestada uma contraparte positiva de outro teste |
+| Segurança emprestada | **tem de estar escrita no tomador**, senão está a uma faxina de sumir |
+
+A terceira linha é a que se esquece. Uma asserção de vazio-passa — `assert queued_rows() == []` — continua passando se o próprio helper quebrar e devolver sempre vazio. O que a torna significativa é **outro teste** exercitando o mesmo helper positivamente. Essa segurança mora fora da asserção, é invisível no ponto de leitura, e o teste positivo parece redundante numa faxina: afirma caminho feliz. Apagou, o vazio-passa segue verde guardando nada, e nenhum diff mostra que o significado mudou.
+
+Mesmo remédio da **L6** e do `A27b` no firmware, pelo mesmo motivo — teste cujo valor depende de algo fora dele. Três instâncias de um conserto só nas duas metades é argumento melhor que qualquer uma isolada.
+
+### 8.2 Contagens falham pior que vazios
+
+O caso vazio-passa é ruim; **igualdade entre contagens é pior**:
+
+```
+flags 12   envs 12   rows 12   -> passa
+flags  0   envs  0   rows  0   -> TAMBÉM PASSA
+```
+
+E o agravante não é a aritmética, é a **correlação**: as três verificações compartilham família de padrão e são editadas juntas. Verificação independente degrada para divergência; verificação correlacionada degrada para **concordância**. Uma quebra que atinge as três do mesmo jeito satisfaz a igualdade em zero e reporta sucesso numa árvore sem mutação nenhuma cabeada — a falha silenciosa-verde que o arcabouço existe para impedir, chegando dentro da verificação do arcabouço.
+
+Caso de sanidade precisa das **duas metades**:
+- **positiva** — cada padrão tem de casar com algo: toda contagem `> 0`, não só igual;
+- **negativa** — entrada deliberadamente errada tem de produzir o valor de **falha**.
+
+### 8.3 O caso que motivou a regra
+
+A contagem de linhas da tabela do README foi tentada **três vezes por duas pessoas** e devolveu **0, 0, 12**. Uma quebrou num padrão que casava com uma forma de texto que a tabela não tem; a outra numa crase dentro de aspas duplas, que abriu substituição de comando e comeu o padrão. **Dois bugs diferentes, saída idêntica.**
+
+Nenhuma das duas virou achado apenas porque as duas pessoas reportaram o **padrão quebrado** em vez do número. Isso não é processo que escale — depender de quem reporta ser cuidadoso é exatamente o que o caso de sanidade substitui.

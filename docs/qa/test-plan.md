@@ -352,10 +352,23 @@ assume a run happened and produced output to be suspicious of. This one produces
 nothing.
 
 ```
-grep -rho 'MUTANT_[A-Z_]*' lib/ | sort -u          # ifdefs
-grep -o 'MUTANT_[A-Z_]*' platformio.ini | sort -u  # envs
-grep -o 'MUTANT_[A-Z_]*' test/README.md | sort -u  # rows
+grep -rho 'MUTANT_[A-Z][A-Z_]*' lib/ | sort -u          # ifdefs
+grep -o  'MUTANT_[A-Z][A-Z_]*' platformio.ini | sort -u # envs
+grep -o  'MUTANT_[A-Z][A-Z_]*' test/README.md | sort -u # rows
 ```
+
+**`[A-Z][A-Z_]*`, not `[A-Z_]*`** — the looser form permits zero characters after the
+prefix, so it also matches the bare token `MUTANT_` in prose like `-DMUTANT_* flags` and
+reports a phantom asymmetry. That defect was visible as a stray `MUTANT_` line in the
+very first run of this check and went unexamined for hours.
+
+**And agreement alone is not a pass.** If the pattern itself breaks, every side returns
+nothing, the sets agree, and the check reports success — `0 == 0 == 0` satisfies the
+equality outright. Assert the count is the number you expect **and** non-zero, not just
+that the three sets match. See
+[Every check needs a sanity case](tooling-evaluation.md#every-check-needs-a-sanity-case-and-the-equality-form-needs-two);
+four invariant `grep`s were themselves broken in a single afternoon, and one of them was
+the command written to check for exactly this.
 
 ---
 
