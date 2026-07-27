@@ -29,8 +29,11 @@ void App::begin()
     pinMode(IMU_INT2_PIN, INPUT);
     _wifi.configure(DEVICE_IP, NETWORK_GW, NETWORK_SUBNET);
 
-    _sampleBuf = (uint8_t *)ps_malloc(ACQUISITION_BUFFER_BYTES);
-    _ring = new RingBuffer(_sampleBuf, ACQUISITION_FRAME_CAPACITY, SAMPLE_SIZE_BYTES);
+    // Allocates, checks, and halts loudly if PSRAM cannot give us the buffer. The
+    // unchecked ps_malloc this replaces is R1.
+    _ring = new RingBuffer(make_sample_ring(_alloc, _fault,
+                                            ACQUISITION_BUFFER_BYTES,
+                                            SAMPLE_SIZE_BYTES));
     _acq = new AcquisitionService(_imu, *_ring);
     _acq->setConfig(serverConfig);
 

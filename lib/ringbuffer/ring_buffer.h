@@ -43,6 +43,11 @@ public:
 
     ReadPlan plan() const;
     uint32_t bytesStored() const;
+
+    // Zero when the ring has no storage — see make_sample_ring on a failed
+    // allocation.
+    uint32_t frameCapacity() const;
+
     void reset();
 
 private:

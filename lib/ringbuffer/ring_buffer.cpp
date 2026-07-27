@@ -72,6 +72,11 @@ uint32_t RingBuffer::bytesStored() const
     return _count * _frameSize;
 }
 
+uint32_t RingBuffer::frameCapacity() const
+{
+    return _frameCapacity;
+}
+
 void RingBuffer::reset()
 {
     _head = 0;
