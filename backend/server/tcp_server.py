@@ -72,6 +72,37 @@ def save_data():
             data_queue.task_done()
 
 
+def recv_exact(conn, n: int) -> bytes:
+    """Read exactly n bytes from conn.
+
+    A TCP recv() may return fewer bytes than asked for, and returns b'' for
+    ever once the peer has closed — looping on that spins at 100% CPU without
+    ever raising, so a closed peer aborts the read instead.
+
+    Args:
+        conn: connected socket
+        n:    number of bytes to read; 0 returns b'' without touching the socket
+
+    Returns:
+        Exactly n bytes.
+
+    Raises:
+        ConnectionError: peer closed before n bytes arrived.
+        socket.timeout:  propagated from recv — timeout policy is the caller's.
+    """
+    if n <= 0:
+        return b''
+    chunks    = []
+    remaining = n
+    while remaining > 0:
+        chunk = conn.recv(remaining)
+        if not chunk:
+            raise ConnectionError(f'peer closed after {n - remaining}/{n} bytes')
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b''.join(chunks)
+
+
 def handle_client(conn, addr, state: AppState):
     """Handle one ESP32 connection from start to finish.
 
