@@ -151,22 +151,38 @@ def handle_client(conn, addr, state: AppState):
         for s in samples:
             s.append(battery_mv)
 
-        # Send current config to the device (read atomically under lock)
-        with state.lock:
-            response = pack_server_config(
-                state.config.sleep_min, state.config.idle_min,
-                state.config.max_acq,   state.config.cooldown_sec, 0
-            )
-        conn.sendall(response)
-        logging.info(f"Config sent to {addr[0]}")
+        # Snapshot the config and claim the one-shot OTA arming in a single
+        # operation. The response is built from that snapshot and never from a
+        # second read of state.config: a POST /config landing in between would
+        # otherwise ship a config no operator ever paired with this arming.
+        config, ota = state.take_config_for_send()
+        response = pack_server_config(
+            config.sleep_min, config.idle_min,
+            config.max_acq,   config.cooldown_sec, int(ota)
+        )
 
-        # Record this connection in the web UI history
+        try:
+            conn.sendall(response)
+            logging.info(f"Config sent to {addr[0]} (update={int(ota)})")
+        except OSError as e:
+            # Nothing reached the device. Give the arming back so it goes to the
+            # next device, and record the connection as not having taken it —
+            # a history that lies here sends the operator hunting for an access
+            # point that will never appear.
+            if ota:
+                state.rearm_ota()
+                ota = False
+            logging.error(f"Config not delivered to {addr[0]}: {e}")
+
+        # Record this connection in the web UI history — also when the send
+        # failed, because the samples did arrive.
         with state.lock:
             state.connections.append(ConnectionEntry(
                 ip=addr[0],
                 timestamp=datetime.datetime.now(),
                 n_samples=len(samples),
                 battery_mv=battery_mv,
+                ota_sent=ota,
             ))
 
     except socket.timeout:

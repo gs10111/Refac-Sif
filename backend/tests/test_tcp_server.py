@@ -57,6 +57,19 @@ def make_recv_sequence(n_samples: int = 1, extra_bytes: int = 0):
     return [header, body, batt]
 
 
+def exchange(state, ip='10.0.0.1', n_samples=1):
+    """Run one complete connection against state and return the mock socket."""
+    conn = MagicMock()
+    conn.recv.side_effect = make_recv_sequence(n_samples=n_samples)
+    handle_client(conn, (ip, 5000), state)
+    return conn
+
+
+def sent_config(conn):
+    """Unpack the 10-byte ServerConfig the server wrote to the socket."""
+    return struct.unpack('<HHHHH', conn.sendall.call_args[0][0])
+
+
 def test_handle_client_sends_config_from_state():
     """Config values in AppState are used in the response to ESP32."""
     state = AppState()
@@ -65,17 +78,14 @@ def test_handle_client_sends_config_from_state():
     state.config.max_acq      = 4
     state.config.cooldown_sec = 7
 
-    conn = MagicMock()
-    conn.recv.side_effect = make_recv_sequence(n_samples=1)
+    conn = exchange(state)
 
-    handle_client(conn, ('10.0.0.1', 5000), state)
-
-    sent = conn.sendall.call_args[0][0]
-    sleep_min, idle_min, max_acq, cooldown_sec = struct.unpack('<HHHH', sent)
+    sleep_min, idle_min, max_acq, cooldown_sec, update = sent_config(conn)
     assert sleep_min    == 99
     assert idle_min     == 11
     assert max_acq      == 4
     assert cooldown_sec == 7
+    assert update       == 0
 
 
 def test_handle_client_logs_connection_to_state():
@@ -334,6 +344,152 @@ def test_save_data_writes_the_original_csv_header(tmp_path, monkeypatch):
         header = next(csv.reader(f))
 
     assert header == ORIGINAL_CSV_HEADER
+
+
+# --------------------------------------------------------------------------
+# One-shot OTA arming on the wire (B0 / D3). The flag goes to the NEXT device
+# that completes a transmission and is cleared by the claim itself.
+# --------------------------------------------------------------------------
+
+def test_handle_client_sends_update_zero_when_disarmed():
+    state = AppState()
+
+    conn = exchange(state)
+
+    assert sent_config(conn)[4] == 0
+
+
+def test_handle_client_sends_update_one_when_armed():
+    state = AppState()
+    state.set_ota_armed(True)
+
+    conn = exchange(state)
+
+    assert sent_config(conn)[4] == 1
+
+
+def test_handle_client_clears_ota_after_send():
+    state = AppState()
+    state.set_ota_armed(True)
+
+    exchange(state)
+
+    assert state.ota_armed is False
+
+
+def test_handle_client_second_connection_gets_update_zero():
+    """Sequential, deliberately: this pins that the second caller sees a
+    cleared flag. That two simultaneous claims cannot both win is a different
+    property and lives in test_app_state's barrier test."""
+    state = AppState()
+    state.set_ota_armed(True)
+
+    first  = exchange(state, ip='10.0.0.1')
+    second = exchange(state, ip='10.0.0.2')
+
+    assert sent_config(first)[4]  == 1
+    assert sent_config(second)[4] == 0
+
+
+def test_handle_client_logs_ota_sent_in_entry():
+    state = AppState()
+    state.set_ota_armed(True)
+
+    exchange(state)
+
+    assert state.connections[0].ota_sent is True
+
+
+def test_handle_client_logs_ota_not_sent_when_disarmed():
+    state = AppState()
+
+    exchange(state)
+
+    assert state.connections[0].ota_sent is False
+
+
+def test_handle_client_sends_the_claimed_snapshot_not_a_later_config():
+    """The response must come from the claim, not from re-reading state.config.
+
+    A POST /config landing between the claim and the pack would otherwise ship
+    a config that no operator ever saw paired with that arming.
+    """
+    state = AppState()
+    with state.lock:
+        state.config.sleep_min = 99
+    real_take = state.take_config_for_send
+
+    def take_then_config_changes():
+        snapshot, ota = real_take()
+        with state.lock:
+            state.config.sleep_min = 1234  # operator saves right after the claim
+        return snapshot, ota
+
+    state.take_config_for_send = MagicMock(side_effect=take_then_config_changes)
+
+    conn = exchange(state)
+
+    assert state.take_config_for_send.call_count == 1
+    assert sent_config(conn)[0] == 99
+
+
+# --------------------------------------------------------------------------
+# Failed delivery: the arming goes back, and the connection is still recorded.
+# (B7, pulled forward from S4 — a device that took the flag is about to reboot
+# into AP mode and disappear, so losing its history entry costs the most here.)
+# --------------------------------------------------------------------------
+
+def test_handle_client_rearms_ota_when_send_fails():
+    """Nobody received the flag, so it must reach the next device instead."""
+    state = AppState()
+    state.set_ota_armed(True)
+
+    failed = MagicMock()
+    failed.recv.side_effect    = make_recv_sequence(n_samples=1)
+    failed.sendall.side_effect = OSError('broken pipe')
+    handle_client(failed, ('10.0.0.1', 5000), state)
+
+    assert state.ota_armed is True
+    assert sent_config(exchange(state, ip='10.0.0.2'))[4] == 1
+
+
+def test_handle_client_does_not_rearm_when_send_succeeds():
+    state = AppState()
+    state.set_ota_armed(True)
+    state.rearm_ota = MagicMock()
+
+    exchange(state)
+
+    assert state.rearm_ota.call_count == 0
+
+
+def test_handle_client_logs_entry_when_send_fails():
+    """The samples did arrive — the connection belongs in the history."""
+    state = AppState()
+
+    conn = MagicMock()
+    conn.recv.side_effect    = make_recv_sequence(n_samples=2)
+    conn.sendall.side_effect = OSError('broken pipe')
+    handle_client(conn, ('10.0.0.4', 5000), state)
+
+    assert len(state.connections) == 1
+    assert state.connections[0].ip         == '10.0.0.4'
+    assert state.connections[0].n_samples  == 2
+    assert state.connections[0].battery_mv == BATTERY_MV
+
+
+def test_handle_client_logs_ota_not_sent_when_send_fails():
+    """The flag was claimed but never delivered — the history must not claim
+    the device went to OTA, or the operator waits for an AP that never appears."""
+    state = AppState()
+    state.set_ota_armed(True)
+
+    conn = MagicMock()
+    conn.recv.side_effect    = make_recv_sequence(n_samples=1)
+    conn.sendall.side_effect = OSError('broken pipe')
+    handle_client(conn, ('10.0.0.4', 5000), state)
+
+    assert state.connections[0].ota_sent is False
 
 
 def test_save_data_writes_the_battery_in_the_last_column(tmp_path, monkeypatch):
