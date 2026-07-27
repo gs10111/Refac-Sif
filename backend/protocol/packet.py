@@ -5,6 +5,10 @@ HEADER_SIZE_BYTES  =  4
 BATTERY_SIZE_BYTES =  2
 SERVER_CONFIG_SIZE = 10  # 5 × uint16_t
 
+# Every field of the response travels as a uint16. This is the width of the
+# wire field, not a tunable policy.
+UINT16_MAX = 65535
+
 # Column order matches the 18-byte sample layout. Names are the ones the
 # production servers write (pyFiles/win_server.py:45) — the historical CSV
 # corpus and tools/analysis/cliente_local_csv.py depend on them.
