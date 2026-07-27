@@ -16,3 +16,4 @@ DEFAULT_SLEEP_MIN      = 240
 DEFAULT_IDLE_MIN       =  20
 DEFAULT_MAX_ACQ        =   5
 DEFAULT_COOLDOWN_SEC   =   5
+DEFAULT_UPDATE         =   0  # OTA disarmed at startup
