@@ -157,9 +157,32 @@ static void test_bytes_stored_never_exceeds_capacity(void)
     TEST_ASSERT_EQUAL_UINT32(rb.bytesStored(), rb.plan().totalBytes());
 }
 
+// A22 — the payload stays a whole number of frames across every wrap.
+//
+// This is R13 stated as an invariant rather than as an arithmetic fact. The ring is
+// addressed in FRAMES, so no sequence of appends can leave a partial one — and the
+// server slices the payload on a fixed 18-byte stride, so a buffer that ever held
+// 699984 + 16 bytes would decode garbage from that point on and keep decoding
+// garbage for the rest of the file.
+static void test_bytes_stored_stays_a_whole_number_of_frames_across_a_wrap(void)
+{
+    RingBuffer rb(storage, kFrames, kFrameSize);
+
+    uint8_t frame[kFrameSize];
+    for (uint32_t i = 0; i < 4 * kFrames + 3; i++)
+    {
+        make_frame(frame, (uint8_t)(i & 0xFF));
+        rb.append(frame);
+
+        TEST_ASSERT_EQUAL_UINT32(0, rb.bytesStored() % kFrameSize);
+        TEST_ASSERT_EQUAL_UINT32(0, rb.plan().totalBytes() % kFrameSize);
+    }
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_bytes_stored_stays_a_whole_number_of_frames_across_a_wrap);
     RUN_TEST(test_ring_capacity_is_whole_number_of_frames);
     RUN_TEST(test_append_advances_head_by_one_frame);
     RUN_TEST(test_plan_is_one_range_from_zero_when_not_wrapped);

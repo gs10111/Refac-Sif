@@ -300,9 +300,34 @@ static void test_frame_timestamp_is_the_one_passed_to_step(void)
     TEST_ASSERT_EQUAL_UINT8(0xAA, plan.first.ptr[3]);
 }
 
+// A24 — starting an acquisition must NOT wake the IMU.
+//
+// Production wakes it once per boot (main.cpp:114). The refactor woke it inside
+// every collect, re-programming PWR_MGMT0 and adding delay(45) to each one. "begin()
+// wakes it exactly once" is a property of App and stays structural, but the harmful
+// direction — waking per acquisition — is entirely inside this service, and this is
+// what stops it coming back.
+static void test_begin_acquisition_never_wakes_the_imu(void)
+{
+    FakeImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    acq.setConfig(defaults());
+
+    acq.beginAcquisition(0);
+    acq.step(1, TRIGGER_EVENT_STOP);
+    acq.beginAcquisition(2);
+    acq.step(3, TRIGGER_EVENT_STOP);
+    acq.beginAcquisition(4);
+
+    TEST_ASSERT_EQUAL_UINT32(0, imu.wakeCalls());
+    TEST_ASSERT_EQUAL_UINT32(0, imu.sleepCalls());
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_begin_acquisition_never_wakes_the_imu);
     RUN_TEST(test_collect_stops_when_trigger_requests_stop);
     RUN_TEST(test_collect_stops_after_the_idle_timeout_with_no_trigger);
     RUN_TEST(test_collect_does_not_stop_before_the_idle_timeout);
