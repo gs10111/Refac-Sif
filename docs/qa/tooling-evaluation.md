@@ -243,9 +243,33 @@ this is glue*. The proposed design calls `handle_client` directly and never runs
 `server_main`, so the mutant survives it untouched. The claim and the design were in
 the same message, written by the same person.
 
-**Five instances of one mistake in one afternoon** — the third while measuring the
-first two, the fourth while writing the rule down, the fifth reasoning about the fix
-for the fourth. Every one was caught by the other reader, never by the author.
+A sixth, in the permanent backend documentation, and it is the sharpest of the set:
+the caveat above was first written as *"mutmut flips operators, swaps numbers and nulls
+names, and none of those produce a wrong byte count"* — reasoned from the **tool's list
+of mutation types** rather than from the function body, which contains an operator on a
+byte count (`remaining -= len(chunk)`). Categorising by the shape of the rules instead
+of by what the code holds, while writing the caveat about categorising by shape, into
+the document that outlives the conversation.
+
+A seventh, mine, in this document: I explained the classification drift below as *"the
+suite got slower"* — generalising from a number that had moved and a test that had just
+landed, instead of asking **which mutant, and why**. The suite had not got slower.
+
+**Seven instances of one mistake in one afternoon** — the third while measuring the
+first two, the fourth while writing the rule down, the fifth reasoning about the fix for
+the fourth, the sixth inside the correction itself, the seventh in the paragraph
+correcting the sixth. **Every one was caught by the other reader, never by the author.**
+Seven for seven, across all three of us.
+
+The framing worth keeping is sama's: this is **not carelessness and not inexperience**,
+because all seven happened to people who were holding the rule and writing it down at
+the time. It is that **the artefact in front of you is always more available than the
+question behind it** — a grep result, a mutation-type table, a number that moved. The
+artefact answers immediately; the question requires going and looking. Under any time
+pressure at all, the artefact wins.
+
+That is also why the countermeasure is a second reader rather than more care. Care is
+what all seven of these already had.
 
 Two things follow. The mistake is not about carelessness with lines of code: it is
 categorising by resemblance, and it operates on strategies and predictions as readily
@@ -418,6 +442,13 @@ have sufficed. The policy earns its cost on judgement calls — *is this noise, 
 equivalent, will that test kill this mutant* — and wastes it on set operations. Spending
 two readers on everything would discredit the rule at the point where it matters.
 
+**When two readers are worth it, split them by angle rather than both reading top to
+bottom** — otherwise the second reader repeats the first one's sweep and inherits the
+same blind spot. And judge the split by what the lists *contain*, not by how much they
+overlap: heavy overlap means the split failed, but disjoint lists are not automatically
+success either — an angle can be disjoint because it was empty. **The test is whether
+each list holds something the other angle had no way to reach.**
+
 #### The survivor count is an upper bound on tests needed, not an estimate
 
 Items 5 and 6 were never two items. `subprocess.run([...], check=True)` yields two
@@ -493,8 +524,149 @@ directly and never calls `server_main`, so neither `SERVER_IP` nor `SERVER_PORT`
 ever read. If the number moves, something changed that nobody intended.
 
 A file whose survivor count is fully explained becomes a one-line regression check
-rather than a number to admire. That is the useful end state for a mutation report, and
-it is reachable file by file.
+rather than a number to admire. That is the useful end state for a mutation report, it
+is reachable file by file, and it is a better goal than a score — **a score cannot tell
+you which survivors you decided to keep.**
+
+#### The score is not stable under unrelated changes
+
+Measured, and neither sama nor I anticipated it. Re-running after the loopback test
+landed:
+
+| | Before the integration test | After | After `SHUT_WR` |
+|---|---|---|---|
+| Killed | 132 | **130** | **132** |
+| Suspicious | 0 | **2** | **0** |
+| **Survived** | **54** | **54** | **54** |
+
+The survivor set never moved across all three runs. The score fell by two and came back,
+and neither movement had a cause in the code or in the tests.
+
+**Nothing about those two mutants changed**, and — correcting my own first reading of
+this — **the suite did not get slower either.** The integration test runs in 0.03 s. The
+cause is narrower and more interesting: *those two mutants specifically* became slow,
+and only under a real socket.
+
+Trace `remaining += len(chunk)` against the loopback test: `recv(4)` returns 4,
+`remaining` grows to 8, `recv(8)` drains what is left, `remaining` grows again, and the
+next `recv` has nothing to read — so it **blocks until `handle_client`'s own
+`conn.settimeout(CLIENT_TIMEOUT_SEC)` fires at six seconds.** Against a `MagicMock` the
+identical mutant dies in microseconds when the `side_effect` list runs out. Same mutant,
+same suite, ~200× the wall clock, purely because one test talks to a kernel that is
+willing to wait.
+
+mutmut classifies by wall clock — roughly ten times baseline is a timeout,
+slow-but-not-fatal is *suspicious* — so both were reclassified. Note what *suspicious*
+means here: **killed, but not confidently.** The test does fail; it just fails too
+slowly for the tool to attribute the failure to the test rather than to the clock.
+
+The generalisation is therefore not "a slow test degrades classification elsewhere",
+which is what I first wrote and is wrong. It is: **mutation timing is a property of the
+mutant and the harness together, not of the code.** Introducing real I/O changes how
+*mutants* behave, not merely how tests behave — a mutant that spins or blocks against a
+real resource inherits that resource's timeouts, and the score moves as a result.
+
+This is the strongest argument yet for the recommendation already made above — **watch
+the survivor set, not the score.** Across this run the set was stable at 54 and
+content-identical; the score was not. A team tracking the percentage would have opened
+an investigation into a regression that did not exist, and a team tracking the set would
+have correctly seen nothing happen.
+
+And the mechanism sharpens *why*. The score moved for a cause located **neither in the
+subject nor in the tests' correctness, nor even in the suite's runtime** — it was one
+mutant's interaction with one socket timeout. A number that moves for reasons in none of
+those three places is not a regression signal. The survivor set did not flinch.
+
+It is the same shape as everything else in this document: a number moved, and the cause
+was not in the thing being measured.
+
+**The fix is one line and is better test design regardless of mutmut.** After its
+60-byte write the client calls `shutdown(socket.SHUT_WR)`: it has nothing further to
+send, so any read past the payload gets `b''` immediately instead of blocking for six
+seconds. A framing regression then fails at once, and the failure stays attributable to
+the code rather than to a timeout. `SHUT_WR` closes only client→server, so the response
+direction and the happy path are byte-identical.
+
+*Prediction, recorded before the run with its falsification condition attached, and
+**confirmed**:* the two suspicious mutants returned to **killed** and survivors stayed
+at **54**. The diagnosis was therefore right in mechanism as well as in remedy — had
+they stayed suspicious, the slowness would have been somewhere other than the blocking
+read.
+
+**The rule this generalises to, for every real-I/O test after this one: remove the
+reason to wait, do not shorten the wait.** The distinction is load-bearing.
+
+| | |
+|---|---|
+| **Shortening the wait** | means reaching into production — `handle_client`'s `conn.settimeout(6.0)` is *the device's* timeout, and it is not ours to tune for a test's convenience |
+| **Removing the reason** | means the resource has nothing left to give, so a read past the payload returns immediately. Needs no cooperation from the code under test and changes nothing on the happy path. |
+
+Anything holding a real socket, file or subprocess should be built that way from the
+start. Otherwise every mutant that runs off the end of the data pays the production
+timeout, and the tool reports it as a scoring problem rather than as what it is.
+
+#### Open predictions — unverified at time of writing
+
+The loopback integration test landed in `541fc37` (129 passing; run alone three times,
+0.03 s, identical). It closes L6: no `handle_client` test other than this one exercises
+a real socket, so a wrong-size `recv_exact` could previously pass the whole suite.
+
+Two predictions were recorded before the fact so they could fail visibly. **Both
+confirmed**, by a content diff of the survivor sets rather than by the totals:
+
+| Prediction | Result |
+|---|---|
+| The integration test kills **none** of the ~16 glue survivors | **Confirmed** — it never calls `server_main` |
+| `config/settings.py` stays at exactly **3** survivors | **Confirmed** |
+
+sama's stronger form — that it would kill **nothing at all** — also held: 54 survivors
+before, 54 after, content-identical apart from the two reclassified mutants above.
+
+So the integration test bought no score and removed a failure mode the score cannot see.
+That was the argument for it, and it is now measured rather than argued. **Judged by
+mutants killed it would have been cut** — which is the practical lesson: a tool that
+scores tests will always undervalue the test that fixes the tools.
+
+### What the score does not measure
+
+**Mutation score measures whether your assertions are load-bearing. It does not measure
+whether your test doubles are faithful. A suite of perfect assertions against a mock
+that lies scores 100%.**
+
+L6 is the worked example, and it is the reason the loopback test exists. Every
+`handle_client` test but that one drives a `MagicMock` returning whatever it was queued,
+**regardless of the byte count it was asked for**. So `conn.recv(remaining)` written as
+`conn.recv(n)` — an ordinary human slip that reads fine and breaks every multi-chunk
+read — passes the entire mock-based suite. mutmut does not generate that swap: its
+operators flip comparisons, adjust numbers and null names; they do not substitute one
+local for another.
+
+The general form matters more than the example. **Mutation testing mutates production
+code, and an unfaithful double is a defect in the test, not in the code.** No mutation
+of the source can surface it, so the score is structurally blind to the entire class.
+
+One correction to how this was first put to me, and then a correction to the
+correction. It is **not** true that mutmut generates no wrong-byte-count mutation:
+`remaining -= len(chunk)` at `tcp_server.py:95` yields both `+=` (never terminates) and
+`= len(chunk)` (asks for the wrong count on the next pass). Corrupting the loop
+arithmetic produces a wrong byte count without touching the argument at all, which is
+the class the strong claim said was inexpressible.
+
+**The defensible claim is narrow and specific:** mutmut cannot express *"asked the
+socket for a count that is wrong from the first call"* — `conn.recv(remaining)` written
+as `conn.recv(n)`. That is the shape L6 guards, and it is not generated because mutmut
+does not substitute one local for another.
+
+**The general claim is the one about doubles, and it stands unchanged:** the tool cannot
+see **a mock that ignores its arguments**, because that is a property of the harness
+rather than of the subject. No mutation of production code can surface a defect that
+lives in the test.
+
+Consequence for how to read a verdict here: had the loopback test been judged by mutants
+killed, it would have been cut. It buys no score and removes a failure mode the score
+cannot see. It is also the only test in the backend that would catch a firmware/server
+framing drift — both halves are otherwise tested against their own idea of the format,
+and nothing tests them against each other.
 
 ### Verdict: ADOPT NOW
 

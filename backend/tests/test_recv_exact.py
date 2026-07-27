@@ -55,11 +55,12 @@ def test_recv_exact_concatenates_one_byte_chunks():
 
 
 def test_recv_exact_requests_only_the_missing_bytes():
-    # DO NOT REMOVE. This is the ONLY test in the suite that pins the byte
-    # count recv_exact asks for. Every handle_client test drives a MagicMock,
-    # which ignores the requested size and returns the next side_effect item
-    # regardless — so with this test gone, a recv_exact asking for the wrong
-    # count passes all 110 tests. See docs/backend, L6.
+    # Pins the byte count recv_exact asks for. Every handle_client test drives a
+    # MagicMock, which ignores the requested size and returns the next
+    # side_effect item regardless, so no mock-based test can see a wrong count.
+    # Since 541fc37 this is no longer the only guard —
+    # tests/test_integration_socket.py catches an over-read against a real
+    # socket — but it is the only one that pins it directly. See docs/backend, L6.
     conn = MagicMock()
     conn.recv.side_effect = [b'abcd', b'efghij']
     recv_exact(conn, 10)

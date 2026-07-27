@@ -65,6 +65,12 @@ def test_full_exchange_over_a_real_socket(socket_pair):
     header = len(body).to_bytes(HEADER_SIZE_BYTES, 'little')
     batt   = BATTERY_MV.to_bytes(BATTERY_SIZE_BYTES, 'little')
     client.sendall(header + body + batt)      # 60 bytes, one write
+    # Half-close: the client has nothing more to send, so any read past the
+    # payload returns b'' at once instead of blocking until handle_client's 6 s
+    # socket timeout. A framing regression then FAILS IMMEDIATELY rather than
+    # slowly, which keeps the failure attributable to the code and not to a
+    # clock. The response direction is unaffected.
+    client.shutdown(socket.SHUT_WR)
 
     conn, addr = listener.accept()
     handle_client(conn, addr, state)

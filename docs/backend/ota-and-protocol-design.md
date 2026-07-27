@@ -670,8 +670,22 @@ Isto não passou despercebido: foi levantado na auditoria do backend, escalado, 
 
 `{ip}_{timestamp}.csv`. Um peer IPv6 produz dois-pontos no nome, o que quebra a cópia via gvfs e qualquer manipulação do lado Windows. Mesma forma do servidor de produção — DEC-0 manda deixar como está; registrado para não ser redescoberto.
 
-### L6 — Um único teste fixa os tamanhos pedidos ao socket
+### L6 — Tamanhos pedidos ao socket — **RESOLVIDO** (commit `541fc37`)
 
-Praticamente toda a suíte de `handle_client` é **insensível** ao número de bytes que o `recv_exact` pede, porque `MagicMock` ignora o argumento e devolve o próximo item do `side_effect` independentemente do que se peça. A única coisa segurando essa propriedade é `test_recv_exact_requests_only_the_missing_bytes`.
+**O problema que era:** praticamente toda a suíte de `handle_client` é insensível ao número de bytes que o `recv_exact` pede, porque `MagicMock` ignora o argumento e devolve o próximo item do `side_effect` independentemente do que se peça. Por muito tempo a única coisa segurando essa propriedade foi `test_recv_exact_requests_only_the_missing_bytes` — apagasse esse teste numa faxina e um `recv_exact` pedindo quantidade errada passava na suíte inteira.
 
-Apague esse teste numa faxina e um `recv_exact` pedindo a quantidade errada passa nos 110. Não é buraco hoje, é ponto único de falha na cobertura — e há um comentário `DO NOT REMOVE` no próprio teste apontando para cá. Ponto único documentado é bicho diferente de ponto único despercebido.
+**O que fechou:** `tests/test_integration_socket.py`, uma troca completa sobre socket de loopback real. Um socket real **não consegue** ignorar um tamanho pedido, e a direção danosa é a de **pedir demais**: `recv_exact(conn, 4)` que pedisse 990 receberia os 60 bytes disponíveis de uma vez, consumindo header, payload e bateria juntos — `remaining` fica negativo, o laço encerra, e a função devolve 60 bytes onde deviam vir 4. O `expected` sai como lixo e o teste falha. Nenhum mock percebe isso, porque o mock entrega o item enfileirado independentemente do pedido.
+
+Pedir **de menos** é inofensivo: o laço continua até `remaining == 0`, só com mais chamadas. É a direção que não quebra nada, e por isso não precisa de pino.
+
+Ponto único de falha **eliminado**, não mitigado: hoje dois testes independentes sustentam a propriedade, um contra mock e um contra o sistema operacional.
+
+> **Limite da ferramenta, registrado onde importa.** Primeira versão desta nota dizia que o `mutmut` não gera mutação nenhuma de contagem de bytes. **Errado duas vezes, e as duas conferidas no corpo da função:** `remaining -= len(chunk)` (`tcp_server.py:118`) vira `+=` e vira `=` sob mutação de operador comum, o `mutmut` gera as duas, e **as duas produzem tamanho errado** — não mutando o argumento, mas corrompendo a aritmética do laço, de modo que todo `recv` seguinte pede o número errado. `+=` nunca termina; `=` pede errado já na segunda passada.
+>
+> Sobra a forma **estreita**, que é a que a L6 de fato guarda: o `mutmut` não expressa **"pediu ao socket um valor errado desde a primeira chamada"** — `conn.recv(remaining)` escrito como `conn.recv(n)`. Deslize humano comum, lê bem, quebra toda leitura fragmentada, e não é gerado porque os operadores da ferramenta invertem comparações, ajustam números e anulam nomes, mas **não substituem um local por outro**.
+>
+> A cegueira geral é outra e é estrutural: o que a ferramenta não enxerga é **um dublê que ignora os próprios argumentos** — propriedade do *arcabouço de teste*, não do código sob teste. Teste de mutação muta **código de produção**; dublê infiel é defeito **no teste**, logo nenhuma mutação da fonte pode revelá-lo.
+>
+> Exemplo que fecha o argumento: `conn.recv(remaining)` escrito como `conn.recv(n)`. Deslize humano comum, lê bem, quebra toda leitura fragmentada — e o `mutmut` não o gera, porque seus operadores invertem comparações, ajustam números e anulam nomes, mas não **substituem um local por outro**. Passa na suíte de mocks inteira. Falha contra socket real.
+>
+> Daí a formulação geral: nota de mutação mede se as **asserções** sustentam peso, não se os **dublês** são fiéis. Uma suíte de asserções perfeitas contra um mock que mente pontua 100%. E o corolário incômodo: julgado por mutantes mortos, o teste de integração seria cortado — ferramenta que pontua testes sempre subestima o teste que conserta as ferramentas.
