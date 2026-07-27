@@ -95,18 +95,32 @@ build — and it would not be acceptable for anything in the critical path.
 
 With string mutants disabled:
 
-| | Count |
-|---|---|
-| Mutants generated | **187** |
-| Killed | 115 |
-| Timeout | 3 |
-| Survived | **69** |
-| **Mutation score** | **61.5%** (115/187), or 63.1% counting timeouts as detections |
+Two runs, three days of code apart in effect:
 
-Runtime: a few minutes with a warm cache. **Comfortably inside the loop, not a
-nightly job** — the suite is 0.75 s, and that is what makes this affordable. A
-1-minute suite would have put this at three hours and the verdict would have been
-"nightly, on main only".
+| | Baseline run | After the items 1–10 round (`bc4717a`) |
+|---|---|---|
+| Mutants generated | 187 | 188 |
+| Killed | 115 | **132** |
+| Timeout | 3 | 2 |
+| Survived | 69 | **54** |
+| Mutation score | 61.5% | **70.2%** (73.4% counting timeouts) |
+
+**Read the survivor delta before the score. `54` is not the number that matters —
+`+0 new survivors` is.**
+
+A round that kills sixteen mutants and quietly introduces three still reports a drop of
+thirteen and reads as progress. The totals cannot distinguish that from a round that
+introduced nothing, and the score cannot either: both land on the same percentage. Only
+a content diff of the two survivor sets separates them.
+
+We ran that diff: **16 killed, 0 appeared.** The score moving 61.5% → 70.2% is the
+decoration; the zero is the result.
+
+The same asymmetry applies to every future run, which is why the survivor baseline
+below is the recommended artefact and the score is not.
+
+Runtime: a few minutes with a warm cache — and **runtime was never the constraint.**
+See [what adoption actually costs](#what-adoption-actually-costs).
 
 ### `--disable-mutation-types=string` is not optional
 
@@ -141,10 +155,35 @@ itself: *"This test is the only thing covering that branch — every other B6 te
 the write-succeeded path."*
 
 That is the whole value cycle in one afternoon: **a tool found a hole in code shipped
-the same day, a human wrote the test, and the next run should report that mutant
-killed.** Confirming it is killed is the outstanding step — and it is the honest
-acceptance test for adopting mutmut at all, because a mutation tool whose findings do
-not verifiably close is a report generator.
+the same day, a human wrote the test, and the next run reported the mutant killed.**
+
+**The acceptance test passed.** After the round closing items 1–10 (`bc4717a`):
+
+```
+188 mutants   killed 132   timeout 2   survived 54     (was 116 / 2 / 70)
+```
+
+All eleven named predictions verified dead **by content, not by id**. Sixteen mutants
+died against twelve named ones (`BATTERY_INVALID` was one item but two mutants), so
+**four died as side effects**, identified by diffing the two survivor sets rather than
+guessed:
+
+| Extra kill | Killed by |
+|---|---|
+| `BATTERY_INVALID = None` | the item-9 literal test |
+| `CLIENT_TIMEOUT_SEC = None` | the item-9 literal test |
+| `GDRIVE_PATH = None` | the item-5/6 test asserting the copy destination |
+| `reason = None` (whole ternary) | the item-8 `/ota` message test |
+
+All four are siblings of a named target — the good kind of extra. **Zero new survivors
+appeared**, which is the check that matters more than the drop: a round that kills
+sixteen and quietly introduces three is not progress, and only a content diff of the
+two survivor sets can tell you which happened.
+
+That diff is the baseline workflow proposed [below](#where-i-disagree-this-argues-for-running-it-more-often-not-less),
+run once by hand. It took two minutes and it answered a question the totals could not.
+A mutation tool whose findings do not verifiably close is a report generator; this
+one's do.
 
 **Timeout #89 — `break` → `continue` on the `None` sentinel in `save_data`.**
 
@@ -366,11 +405,33 @@ reader attention**, and it has a price:
 | Delta triage thereafter | one reader, if a content-keyed baseline exists |
 
 **Policy, adopted by lave:** a mutation triage gets two independent readers, or it
-ships with a known one-directional miss. The evidence is three instances in one
-afternoon, and the third is what settles it — the miss happened with the rule
+ships with a known one-directional miss. The evidence is five instances in one
+afternoon, and the later ones are what settle it — the misses happened with the rule
 articulated and in hand, while applying it. That is what makes "one careful reader
 plus a good rule" insufficient rather than merely weaker. Pattern-matching does this
 to whoever is holding the list, not to careless people.
+
+**Scope it to judgement, not to arithmetic.** The survivor-set diff was done twice
+independently and the two results matched exactly — the first time all day two readers
+*agreed*. That agreement is information: the diff is mechanical, so one reader would
+have sufficed. The policy earns its cost on judgement calls — *is this noise, is this
+equivalent, will that test kill this mutant* — and wastes it on set operations. Spending
+two readers on everything would discredit the rule at the point where it matters.
+
+#### The survivor count is an upper bound on tests needed, not an estimate
+
+Items 5 and 6 were never two items. `subprocess.run([...], check=True)` yields two
+mutants — `destino = None` and `check=False` — because the call has two mutable parts,
+but it is **one behaviour**, so it takes **one test** asserting the call it makes.
+Splitting them would have meant two tests building identical fixtures to assert two
+kwargs of the same call. That is why 12 planned tests became 11.
+
+The cause is worth stating because it inflates any estimate built the same way: the
+work list was derived **from the mutants rather than from the behaviours**, so a
+one-call, two-property site got counted twice. **A survivor count bounds the work above;
+it does not estimate it, and the gap is exactly the sites with several mutable parts.**
+For an adoption estimate, "~10 real gaps" should be read as "at most 10 tests, probably
+fewer".
 
 #### Where I disagree: this argues for running it *more* often, not less
 
@@ -406,11 +467,34 @@ on any edit above them, so an id-keyed baseline would report spurious new surviv
 after every commit and be abandoned within a week. Store the `mutmut show all` output
 and diff normalised `(file, removed line, added line)` triples against it.
 
-**Labelled honestly: I have not run this workflow.** The bulk triage is measured; the
-delta workflow is a design proposal, and the ~10-line diff script does not exist. If
-it turns out that renumbering defeats content-keying in some way I have not
-anticipated, lave's milestone cadence is the right fallback and the recommendation
-below should be downgraded to it.
+**Status: demonstrated once, not automated.** The delta workflow was a design proposal
+when first written here; it has since been run by hand — diffing `survivors.txt`
+against `survivors2.txt` on normalised `(file, removed, added)` triples — and it
+produced the `16 killed / 0 appeared` result that the totals could not. Content-keying
+survived the renumbering, which was the part I was least sure of.
+
+What still does not exist is the script. Two minutes by hand for one comparison is
+fine; per-round it wants automating, and until it is automated the delta half of this
+recommendation depends on someone remembering to do it.
+
+#### A standing regression check that costs nothing
+
+`config/settings.py` went from 9 survivors to 3, and all three are accounted for:
+
+| Survivor | Status |
+|---|---|
+| `MAX_PAYLOAD_BYTES = 1400001` | alive on purpose — see above |
+| `SERVER_IP = None` | unreachable: read only by `server_main`'s bind |
+| `SERVER_PORT = None` | unreachable: read only by `server_main`'s bind |
+
+So `settings.py` is fully triaged and **should sit at 3 indefinitely**. Notably it
+should stay at 3 through the loopback integration round too: that design binds port 0
+directly and never calls `server_main`, so neither `SERVER_IP` nor `SERVER_PORT` is
+ever read. If the number moves, something changed that nobody intended.
+
+A file whose survivor count is fully explained becomes a one-line regression check
+rather than a number to admire. That is the useful end state for a mutation report, and
+it is reachable file by file.
 
 ### Verdict: ADOPT NOW
 
