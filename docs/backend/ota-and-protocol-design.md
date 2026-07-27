@@ -439,3 +439,11 @@ Mitigações possíveis quando for a hora (uma OU outra, não as duas):
 - **Piso de throughput**: mede bytes/s ao longo da conexão e derruba abaixo de um mínimo. Mais tolerante a uma transferência legitimamente lenta, mais código e mais um número para calibrar.
 
 Preferência, se/quando entrar: deadline acumulado, dimensionado a partir do throughput medido em campo pelo firmware (o original já imprime kbps ao fim de cada transmissão), com folga larga.
+
+#### L1b — O mesmo timeout limita o desligamento
+
+O laço de recepção era gateado no global `running` (`while running: conn.recv(...)`), então um desligamento no meio de uma transferência abandonava a conexão. Com a leitura por `recv_exact` não existe mais laço nem gate: uma transferência em curso vai até o fim ou até o timeout do socket. `server_main` continua checando `running` no laço de `accept`, então o desligamento funciona — só não é mais instantâneo para uma conexão já em andamento.
+
+Isso é deliberado, não esquecimento. Não havia comportamento bem definido a preservar: a versão de "abandonar" do servidor de produção era estourar `UnboundLocalError` no `finally` com `battery_voltage` não-vinculado e matar o worker. Restaurar o gate significaria **projetar** o que é um abandono limpo — decisão nova, sem teste por trás.
+
+Consequência que liga L1b a L1: o mesmo peer lento que segura um worker também **atrasa o desligamento**, porque o dreno das conexões em curso é limitado pelo mesmo timeout por `recv`. É a mesma propriedade vista de outro ângulo — a mitigação de L1 (deadline acumulado) fecha as duas.

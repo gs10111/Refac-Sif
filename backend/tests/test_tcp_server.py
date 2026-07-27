@@ -1,3 +1,4 @@
+import csv
 import socket
 import struct
 import datetime
@@ -15,6 +16,14 @@ from server.tcp_server import handle_client
 
 
 BATTERY_MV = 3800
+
+# The CSV header the production servers write (pyFiles/win_server.py:45).
+# Spelled out on purpose: comparing against protocol.packet.CSV_COLUMNS would
+# only prove the writer agrees with the constant, not that either is right.
+ORIGINAL_CSV_HEADER = [
+    'timestamp', 'x_data', 'x_gyro', 'y_data', 'y_gyro', 'z_data', 'z_gyro',
+    'temp', 'battery_voltage',
+]
 
 
 @pytest.fixture(autouse=True)
@@ -295,3 +304,47 @@ def test_handle_client_queues_nothing_when_payload_is_truncated():
     assert conn.sendall.call_count == 0
     assert len(state.connections)  == 0
     assert queued_rows()           == []
+
+
+# --------------------------------------------------------------------------
+# CSV output — the historical corpus and tools/analysis/cliente_local_csv.py
+# read these column names. (B5 / DEC-3)
+# --------------------------------------------------------------------------
+
+def run_save_data_once(tmp_path, monkeypatch, ip, timestamp, rows):
+    """Run save_data over a single queued item and return the file it wrote."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tcp_server.subprocess, 'run', lambda *a, **k: None)
+
+    tcp_server.data_queue.put((ip, timestamp, rows))
+    tcp_server.data_queue.put(None)  # sentinel — stops the worker loop
+    tcp_server.save_data()
+
+    return tmp_path / f"{ip}_{timestamp.strftime('%Y%m%d_%H%M%S')}.csv"
+
+
+def test_save_data_writes_the_original_csv_header(tmp_path, monkeypatch):
+    written = run_save_data_once(
+        tmp_path, monkeypatch,
+        '10.0.0.9', datetime.datetime(2026, 5, 20, 14, 0, 0),
+        [[1, 2, 3, 4, 5, 6, 7, 8, BATTERY_MV]],
+    )
+
+    with written.open(newline='', encoding='utf-8') as f:
+        header = next(csv.reader(f))
+
+    assert header == ORIGINAL_CSV_HEADER
+
+
+def test_save_data_writes_the_battery_in_the_last_column(tmp_path, monkeypatch):
+    written = run_save_data_once(
+        tmp_path, monkeypatch,
+        '10.0.0.9', datetime.datetime(2026, 5, 20, 14, 0, 0),
+        [[1, 2, 3, 4, 5, 6, 7, 8, BATTERY_MV]],
+    )
+
+    with written.open(newline='', encoding='utf-8') as f:
+        header, row = list(csv.reader(f))
+
+    assert len(row) == len(header)
+    assert row[-1]  == str(BATTERY_MV)

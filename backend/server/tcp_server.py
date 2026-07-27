@@ -32,7 +32,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from protocol.packet import (
     SAMPLE_SIZE_BYTES, HEADER_SIZE_BYTES, BATTERY_SIZE_BYTES,
-    SERVER_CONFIG_SIZE, SAMPLE_COLUMNS, parse_sample, pack_server_config
+    SERVER_CONFIG_SIZE, SAMPLE_COLUMNS, CSV_COLUMNS,
+    parse_sample, pack_server_config
 )
 from config.settings import (
     SERVER_IP, SERVER_PORT, BUFFER_SIZE, GDRIVE_PATH,
@@ -62,7 +63,7 @@ def save_data():
         try:
             with open(filename, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
-                writer.writerow(SAMPLE_COLUMNS + ['battery_mv'])
+                writer.writerow(CSV_COLUMNS)
                 writer.writerows(samples)
             destino = os.path.join(GDRIVE_PATH, filename)
             subprocess.run(["gio", "copy", filename, destino], check=True)
