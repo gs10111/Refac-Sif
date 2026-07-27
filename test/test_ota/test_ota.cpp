@@ -32,6 +32,11 @@
 // makes this mechanical rather than a judgement call, and it is what nobody ran
 // before this clause was first signed as a fidelity fix.
 //
+// (The RULE is process and its canonical home is docs/qa/test-plan.md section 0.
+// What is stated here is its APPLICATION to this clause — a fact about this
+// citation, which cannot drift from the rule because it is not a copy of it. If the
+// two ever disagree, section 0 wins.)
+//
 // The trade, stated so a reader can weigh it rather than accept it: without the
 // bound, a device whose bring-up keeps failing holds the flag indefinitely and can
 // walk into AP mode at an arbitrary future wake — weeks later, no operator present,
