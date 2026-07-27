@@ -185,6 +185,18 @@ def test_post_config_accepts_uint16_maximum(client):
     assert state.config.sleep_min == UINT16_MAX
 
 
+def test_post_config_accepts_one_as_the_minimum(client):
+    """The lower bound is inclusive. max_acq=1 and cooldown_sec=1 are ordinary
+    operator values, and nothing pinned that `<= 0` was not `<= 1`."""
+    c, state = client
+
+    response = c.post('/config', data=form(
+        sleep_min='1', idle_min='1', max_acq='1', cooldown_sec='1'))
+
+    assert response.status_code == 303
+    assert config_tuple(state) == (1, 1, 1, 1)
+
+
 def test_post_config_error_message_mentions_the_protocol_limit(client):
     c, _ = client
 
@@ -271,6 +283,34 @@ def test_post_ota_rejects_missing_value(client):
 
     assert response.status_code == 400
     assert state.ota_armed is True
+
+
+def test_post_ota_missing_field_message_says_so(client):
+    c, _ = client
+
+    body = c.post('/ota', data={}).data.decode()
+
+    assert 'campo ausente' in body
+    assert 'nao e um valor valido' not in body
+
+
+def test_post_ota_invalid_value_message_quotes_it(client):
+    c, _ = client
+
+    body = c.post('/ota', data={'armed': 'maybe'}).data.decode()
+
+    assert '"maybe"' in body
+    assert 'campo ausente' not in body
+
+
+def test_index_is_never_cached(client):
+    """A back-button render showing a stale arming is what costs the operator
+    their trust in the page."""
+    c, _ = client
+
+    response = c.get('/')
+
+    assert response.headers['Cache-Control'] == 'no-store'
 
 
 def test_post_ota_does_not_change_config(client):

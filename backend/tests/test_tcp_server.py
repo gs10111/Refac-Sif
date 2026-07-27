@@ -38,12 +38,17 @@ def drain_data_queue():
         tcp_server.data_queue.get_nowait()
 
 
+def queued_item():
+    """The (ip, timestamp, samples) tuple handed to save_data, or None."""
+    if tcp_server.data_queue.empty():
+        return None
+    return tcp_server.data_queue.get_nowait()
+
+
 def queued_rows():
     """Rows handed to save_data by the last connection, or [] if nothing was queued."""
-    if tcp_server.data_queue.empty():
-        return []
-    _ip, _timestamp, samples = tcp_server.data_queue.get_nowait()
-    return samples
+    item = queued_item()
+    return [] if item is None else item[2]
 
 
 def make_recv_sequence(n_samples: int = 1, extra_bytes: int = 0):
@@ -217,6 +222,69 @@ def test_handle_client_rejects_absurd_expected_size():
     assert conn.recv.call_count   == 1
     assert conn.sendall.call_count == 0
     assert len(state.connections)  == 0
+
+
+def test_handle_client_accepts_a_payload_exactly_at_the_limit(monkeypatch):
+    """The limit is inclusive. Patched down to 36 bytes so the boundary is
+    exercised without allocating 1.4 MB of mock payload."""
+    monkeypatch.setattr(tcp_server, 'MAX_PAYLOAD_BYTES', 36)
+    state = AppState()
+    conn  = MagicMock()
+    conn.recv.side_effect = make_recv_sequence(n_samples=2)  # 36 bytes exactly
+
+    handle_client(conn, ('10.0.0.1', 5000), state)
+
+    assert conn.sendall.call_count == 1
+    assert state.connections[0].n_samples == 2
+
+
+def test_handle_client_rejects_a_payload_one_byte_over_the_limit(monkeypatch):
+    monkeypatch.setattr(tcp_server, 'MAX_PAYLOAD_BYTES', 36)
+    state = AppState()
+    conn  = MagicMock()
+    conn.recv.side_effect = [(37).to_bytes(HEADER_SIZE_BYTES, 'little')]
+
+    handle_client(conn, ('10.0.0.1', 5000), state)
+
+    assert conn.recv.call_count    == 1
+    assert conn.sendall.call_count == 0
+
+
+def test_handle_client_applies_the_production_socket_timeout():
+    """6.0 s per recv, the value the production server uses (win_server.py:60).
+    Asserted as a literal: reading CLIENT_TIMEOUT_SEC would only prove the code
+    agrees with the constant, and both can be wrong together."""
+    state = AppState()
+    conn  = exchange(state)
+
+    assert conn.settimeout.call_args[0][0] == 6.0
+
+
+def test_handle_client_queues_the_device_ip_not_the_port():
+    """The CSV filename is built from this field. Taking addr[1] would name
+    every file after the source port and unkey the whole corpus."""
+    state = AppState()
+    conn  = MagicMock()
+    conn.recv.side_effect = make_recv_sequence(n_samples=1)
+
+    handle_client(conn, ('10.0.0.77', 54321), state)
+
+    ip, _timestamp, _samples = queued_item()
+    assert ip == '10.0.0.77'
+
+
+def test_missing_battery_is_recorded_as_minus_one():
+    """-1 is the production sentinel (win_server.py:105) and the historical CSV
+    corpus contains it. Literal, for the same reason as the timeout above."""
+    state  = AppState()
+    header, body, _ = make_recv_sequence(n_samples=1)
+    conn   = MagicMock()
+    conn.recv.side_effect = [header, body, b'']
+
+    handle_client(conn, ('10.0.0.1', 5000), state)
+
+    assert state.connections[0].battery_mv == -1
+    assert queued_rows()[0][-1]            == -1
 
 
 def test_handle_client_rejects_payload_over_max():
@@ -561,6 +629,24 @@ def test_save_data_does_not_report_a_save_failure_when_only_the_copy_failed(
 
     messages = [r.getMessage().lower() for r in caplog.records]
     assert not any('failed to save' in m for m in messages), messages
+
+
+def test_save_data_copies_to_the_gdrive_path_and_checks_the_exit_code(tmp_path, monkeypatch):
+    """Two things nothing pinned: WHERE the copy goes, and that a non-zero exit
+    from gio is treated as a failure. Without check=True a refused copy is
+    logged as a success."""
+    calls = []
+    run_save_data_once(
+        tmp_path, monkeypatch,
+        '10.0.0.9', datetime.datetime(2026, 5, 20, 14, 0, 0),
+        [[1, 2, 3, 4, 5, 6, 7, 8, BATTERY_MV]],
+        copy=lambda *a, **k: calls.append((a, k)),
+    )
+
+    (argv,), kwargs = calls[0]
+    assert argv[:3] == ['gio', 'copy', '10.0.0.9_20260520_140000.csv']
+    assert argv[3].startswith(tcp_server.GDRIVE_PATH)
+    assert kwargs.get('check') is True
 
 
 def test_save_data_does_not_copy_to_drive_when_the_local_write_fails(tmp_path, monkeypatch):

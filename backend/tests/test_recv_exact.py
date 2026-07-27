@@ -88,7 +88,18 @@ def test_recv_exact_error_reports_partial_progress():
     conn.recv.side_effect = [b'abc', b'']
     with pytest.raises(ConnectionError) as excinfo:
         recv_exact(conn, 8)
-    assert '3/8' in str(excinfo.value)
+    # NOT `'3/8' in ...` — that is satisfied by "13/8", so an arithmetic error in
+    # the progress figure passes it. Anchor on the whole phrase.
+    assert 'after 3/8 bytes' in str(excinfo.value)
+
+
+def test_recv_exact_reads_a_single_byte():
+    """n=1 is on the far side of the `n <= 0` guard: off by one and it returns
+    b'' without reading anything."""
+    conn = MagicMock()
+    conn.recv.side_effect = [b'z']
+    assert recv_exact(conn, 1) == b'z'
+    assert conn.recv.call_count == 1
 
 
 def test_recv_exact_zero_bytes_returns_empty_without_calling_recv():

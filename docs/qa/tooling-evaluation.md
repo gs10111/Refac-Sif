@@ -5,7 +5,7 @@ today, and what does it cost**.
 
 | Tool | Verdict | Cost | First step |
 |---|---|---|---|
-| **mutmut** (backend mutation testing) | **ADOPT NOW**, pinned to 2.5.1, string mutants disabled | minutes per run, one pinned dependency, one documented invocation | sama writes the test for survivor #94 |
+| **mutmut** (backend mutation testing) | **ADOPT NOW**, pinned to 2.5.1, `string,fstring` disabled | minutes per run — but the real cost is **two readers for the first triage**, one per run after | build the content-keyed survivor baseline |
 | **QEMU (Espressif fork) + pytest-embedded** | **REJECT** | an ESP-IDF install plus a port off the Arduino framework, to answer 1 of 3 questions | none |
 | **Wokwi + wokwi-cli** | **REJECT for the three questions asked. Revisit only for the trigger path in CI** | metered cloud service, alpha scenario API, firmware binary leaves the building | none until H6/H7 are done on a bench |
 
@@ -167,16 +167,62 @@ sample suggested:
 | `addr[0]` → `addr[1]` **inside a log message** | 7 | noise |
 | Untested entrypoints — `server_main`, `exit_monitor`, `__main__` | 15 | real code, no tests; binds sockets and reads stdin |
 | Operational constants in `settings.py` | 8 | low value; nothing asserts them |
-| **Equivalent mutants** | **3 (4%)** | cannot be killed, must not be chased |
+| **Equivalent mutants** | **2 (3%)** | cannot be killed, must not be chased |
 | **Real behavioural holes** | **~10** | listed below, worth tests |
 
-Triaged independently by sama and by me. Where we disagreed, sama was right three
-times; the table above is the reconciled version and the corrections are called out
-below.
+Triaged independently by sama and by me, and **the independence is the finding.** I
+filed mutant 93 as message noise and sama caught it as a weak assertion; sama filed
+mutant 127 as message noise and I caught it as a silent CSV rename. **Each of us was
+blind in exactly the direction the other was not, and neither list was right alone.**
+
+Both misses have the same cause: categorising by the shape that keeps recurring rather
+than by what the line does. Seven `addr[0] → addr[1]` mutants in a row train you to
+sweep the eighth. Twenty-two `XX...XX` mutants train you to sweep an operator mutation
+that happens to sit inside an f-string.
+
+It recurred a third time while counting: a `grep '^+.*addr\[1\]'` returns **nine**
+hits, but one is an `XX`-form mutant whose *unmutated* text merely contains `addr[1]`.
+The real count is eight — seven message-text swaps and mutant 127.
+
+And a fourth time, in this document, by me. I classified `running = True → None` as
+equivalent **by analogy to `saved = False → None`** — same shape, both falsy, filed
+together. It is not equivalent. `running` is read at exactly one place,
+`tcp_server.py:237`, the `while running` of `server_main`'s accept loop; under the
+mutant the server binds, listens, exits the loop immediately, closes the socket and
+posts the shutdown sentinel. A total behavioural change that survives only because
+nothing in the suite runs `server_main`. It is **unreachable glue, not equivalent** —
+caught by sama.
+
+The discriminator is falsifiable rather than a matter of taste, and it is worth
+keeping: *an equivalent mutant cannot be killed by any test that could ever be
+written; an unreachable one is waiting for a test that does not exist yet.*
+
+A fifth followed immediately, and it moved up a level. sama predicted the loopback
+integration test would kill `running = None` — by analogy again, but this time an
+analogy about **test strategy** rather than code shape: *integration tests cover glue,
+this is glue*. The proposed design calls `handle_client` directly and never runs
+`server_main`, so the mutant survives it untouched. The claim and the design were in
+the same message, written by the same person.
+
+**Five instances of one mistake in one afternoon** — the third while measuring the
+first two, the fourth while writing the rule down, the fifth reasoning about the fix
+for the fourth. Every one was caught by the other reader, never by the author.
+
+Two things follow. The mistake is not about carelessness with lines of code: it is
+categorising by resemblance, and it operates on strategies and predictions as readily
+as on `grep` patterns. And it is the strongest evidence in this document for the
+two-reader policy — evidence against the people who wrote the policy, while writing
+it.
+
+**Budget two independent readers for a mutation triage, or accept a one-directional
+miss.** That is a real line item in the adoption cost, and it is the number nobody
+quotes.
+
+The table above is the reconciled version; the corrections are called out below.
 
 **Answering the triage-cost question directly: the equivalent-mutant class is small —
-3 of 70.** `saved = False → None` and `running = False → None`, both falsy under a
-truthiness test. The third I originally filed as a real hole and it is not:
+2 of 70.** `saved = False → None`, falsy under a truthiness test, and one I originally
+filed as a real hole and which is not:
 `if n <= 0` → `if n < 0` in `recv_exact`. With `n = 0` the guard is skipped, but
 `remaining = 0` so `while remaining > 0` never runs and the function returns `b''`
 having touched no socket — identical observable behaviour, including the zero
@@ -227,21 +273,33 @@ message can carry a computed number that something downstream reads.
 | 134, 138 | `continue` → `break` on `socket.timeout`; `running = False` → `True` | 134 stops the accept loop after the first 1-second timeout — the server silently stops accepting connections. Both live in `server_main`/`exit_monitor`, which have no tests at all. |
 | 82 | `subprocess.run(..., check=True)` → `check=False` | `check=True` is what converts a non-zero `gio` exit into the exception the B6 logic branches on. The existing B6 tests monkeypatch `run` to raise, so they never exercise it. |
 
-#### Two survivors to leave alive on purpose
+#### Four survivors stay alive — two impossible, two chosen
 
-**`MAX_PAYLOAD_BYTES = 1400000 → 1400001` (mutant 24).** Killing it means pinning the
-literal, which would **contradict the comment that says this number is sanity headroom
-and not a tuned limit**. A test asserting 1400000 would make the documentation false.
-Leave it, and note that mutant 102 — the `>` vs `>=` *boundary behaviour* — is a
-different thing and is worth pinning. sama's call, and better than my original one:
-I had listed 24 alongside 102 as a single hole. Pinning a number the design says is
-arbitrary is optimising the score against the documentation.
+The distinction matters and lumping them together as "survivors we accept" hides it.
 
-**The equivalent pair.** Closing them would mean restructuring working code to satisfy
-a tool.
+**Impossible — equivalent, unkillable by any test that could ever be written:**
 
-Both belong in writing. A survivor deliberately left alive is indistinguishable from
-one nobody looked at, unless someone wrote down which it is.
+| Mutant | Why |
+|---|---|
+| `saved = False → None` | Both falsy under `if saved:`. No behaviour distinguishes them. |
+| `if n <= 0 → if n < 0` | `n = 0` falls through to a loop that does not execute. Same `b''`, same zero `recv` calls. |
+
+Closing either would mean restructuring working code to satisfy a tool.
+
+**Chosen — killable, deliberately not killed:**
+
+| Mutant | Why not |
+|---|---|
+| `MAX_PAYLOAD_BYTES = 1400000 → 1400001` | Killing it means pinning the literal, which would **make the comment calling it sanity headroom false**. Note mutant 102 — the `>` vs `>=` *boundary behaviour* — is a different thing and **is** worth pinning. Pinning a number the design calls arbitrary is optimising the score against the documentation. |
+| `running = True → None` | Only a test that drives `server_main` reaches `tcp_server.py:237`, and buying that costs the accept loop, sleeps and retries. A bad trade for one glue mutant. |
+
+**Unreachable does not imply we owe it a test.** That is the sentence worth keeping:
+the discriminator tells you whether a mutant *can* be killed, not whether it *should*
+be. Two of these are impossible and two are decisions, and a report that does not say
+which is which leaves the next reader to re-derive it.
+
+A survivor deliberately left alive is indistinguishable from one nobody looked at,
+unless someone wrote down which it is.
 
 #### The glue: ~15 survivors nothing can reach
 
@@ -292,6 +350,67 @@ The lesson generalises to the firmware harness: an automated mutation tool and a
 hand-authored one are not substitutes. Ours can express "delete the line that clears
 the flag" and mutmut cannot; mutmut generates 187 mutants across five modules and we
 would never hand-write 187. **Different instruments, same dial.**
+
+### What adoption actually costs
+
+Runtime was never the binding constraint, and framing it as one — as an earlier
+revision of this document did — was the wrong frame. **The binding constraint is
+reader attention**, and it has a price:
+
+| Cost | Amount |
+|---|---|
+| Runtime | minutes, warm cache. Not the constraint. |
+| Dependency | an unmaintained 2.5.1 pin |
+| Correct invocation | `--disable-mutation-types=string,fstring`, and never broader |
+| **Bulk triage** | **two independent readers, or a known one-directional miss** |
+| Delta triage thereafter | one reader, if a content-keyed baseline exists |
+
+**Policy, adopted by lave:** a mutation triage gets two independent readers, or it
+ships with a known one-directional miss. The evidence is three instances in one
+afternoon, and the third is what settles it — the miss happened with the rule
+articulated and in hand, while applying it. That is what makes "one careful reader
+plus a good rule" insufficient rather than merely weaker. Pattern-matching does this
+to whoever is holding the list, not to careless people.
+
+#### Where I disagree: this argues for running it *more* often, not less
+
+lave's reading is that a tool needing two careful readers is not a fast feedback loop,
+so it belongs at milestones. **The data points the other way, and the mechanism is the
+reason.**
+
+Every miss today was **volume-induced**. Twenty-two near-identical `XX` mutants train
+you to sweep the twenty-third; seven `addr` swaps train you to sweep the eighth. The
+failure needs a long list of look-alikes to happen at all. A delta of two or three
+mutants has no pattern to match against.
+
+So the cost is not per-run, it is per-*bulk*-triage, and the two modes are different
+work:
+
+| Mode | When | Cost |
+|---|---|---|
+| **Bulk triage** — classify the whole survivor set from scratch | once, to establish a baseline | two readers, an afternoon |
+| **Delta triage** — which survivors are *new*, and did any known-killed mutant come back to life | every run after that | one reader, minutes |
+
+Milestone cadence guarantees a large unfamiliar list every time, which guarantees the
+expensive mode every time. **Frequent runs are what keep the delta small, and a small
+delta is what makes one reader safe.** The costs invert from what the milestone
+argument assumes.
+
+The gate is therefore not cadence but **whether a classified baseline exists**. Before
+one: expensive, two readers, once — which is the work this document did. After one:
+cheap, and worth running per round.
+
+**One requirement makes or breaks this, and it falls straight out of the id-stability
+finding:** the baseline must be keyed by **content**, never by mutant id. IDs renumber
+on any edit above them, so an id-keyed baseline would report spurious new survivors
+after every commit and be abandoned within a week. Store the `mutmut show all` output
+and diff normalised `(file, removed line, added line)` triples against it.
+
+**Labelled honestly: I have not run this workflow.** The bulk triage is measured; the
+delta workflow is a design proposal, and the ~10-line diff script does not exist. If
+it turns out that renumbering defeats content-keying in some way I have not
+anticipated, lave's milestone cadence is the right fallback and the recommendation
+below should be downgraded to it.
 
 ### Verdict: ADOPT NOW
 
