@@ -56,6 +56,12 @@
     .ota-row td { background: #2b1220; border-left: 3px solid #e94560; }
     .ota-row:hover td { background: #4a1626; }
     .ota-last { color: #888; font-size: 0.75rem; margin-top: 10px; }
+    .incomplete-row td { background: #2a2410; border-left: 3px solid #c8a415; color: #b9a86a; }
+    .incomplete-row:hover td { background: #3d360f; }
+    .incomplete-badge {
+      background: #c8a415; color: #1a1a2e; padding: 2px 7px;
+      border-radius: 3px; font-size: 0.72rem; letter-spacing: 1px;
+    }
     .ota-badge {
       background: #e94560; color: #fff; padding: 2px 7px;
       border-radius: 3px; font-size: 0.72rem; letter-spacing: 1px;
@@ -124,11 +130,11 @@
         <tbody>
           {% if connections %}
             {% for entry in connections | reverse %}
-            <tr{% if entry.ota_sent %} class="ota-row"{% endif %}>
+            <tr{% if not entry.complete %} class="incomplete-row"{% elif entry.ota_sent %} class="ota-row"{% endif %}>
               <td>{{ entry.ip }}</td>
               <td>{{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-              <td>{{ entry.n_samples }}</td>
-              <td>{{ entry.battery_mv }}</td>
+              <td>{% if entry.complete %}{{ entry.n_samples }}{% else %}<span class="incomplete-badge">INCOMPLETA</span>{% endif %}</td>
+              <td>{% if entry.complete %}{{ entry.battery_mv }}{% else %}&mdash;{% endif %}</td>
               <td>{% if entry.ota_sent %}<span class="ota-badge">OTA</span>{% endif %}</td>
             </tr>
             {% endfor %}

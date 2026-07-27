@@ -145,7 +145,23 @@ def handle_client(conn, addr, state: AppState):
         if expected > MAX_PAYLOAD_BYTES:
             raise ValueError(f"refusing {expected}-byte payload from {addr[0]}")
 
-        payload = recv_exact(conn, expected)
+        try:
+            payload = recv_exact(conn, expected)
+        except (ConnectionError, socket.timeout):
+            # The device promised `expected` bytes and did not deliver them — and it
+            # has already cleared its ring, because production clears once the
+            # connection opened whatever the write did. The acquisition is gone on
+            # both sides. Record the loss: with no row at all, the operator sees a
+            # gap indistinguishable from a belt that never triggered.
+            with state.lock:
+                state.connections.append(ConnectionEntry(
+                    ip=addr[0],
+                    timestamp=datetime.datetime.now(),
+                    n_samples=0,
+                    battery_mv=BATTERY_INVALID,
+                    complete=False,
+                ))
+            raise
 
         # A trailing partial frame is not a sample. Our firmware never sends one
         # (its ring buffer holds whole frames); an older build with a ring size

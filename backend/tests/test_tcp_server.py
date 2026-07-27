@@ -389,8 +389,87 @@ def test_handle_client_queues_nothing_when_payload_is_truncated():
     handle_client(conn, ('10.0.0.1', 5000), state)
 
     assert conn.sendall.call_count == 0
-    assert len(state.connections)  == 0
     assert queued_rows()           == []
+
+
+# --------------------------------------------------------------------------
+# A truncated upload is recorded, not silent. (S2)
+# The device has already cleared its ring — production clears it once the
+# connection opened, whatever the write did — so the data is gone on both
+# sides. Without a row the operator sees a gap indistinguishable from a belt
+# that never triggered.
+# --------------------------------------------------------------------------
+
+def truncated_exchange(state, ip='10.0.0.4', n_samples=4):
+    """Header promises n_samples frames; the peer vanishes mid-payload."""
+    header, body, _ = make_recv_sequence(n_samples=n_samples)
+    conn = MagicMock()
+    conn.recv.side_effect = [header, body[:20], b'']
+    handle_client(conn, (ip, 5000), state)
+    return conn
+
+
+def test_handle_client_logs_an_incomplete_entry_when_payload_is_truncated():
+    state = AppState()
+
+    truncated_exchange(state)
+
+    assert len(state.connections) == 1
+    assert state.connections[0].complete is False
+
+
+def test_handle_client_incomplete_entry_records_the_device_and_no_data():
+    """n_samples 0 would read as "the device sent nothing", which is false — it
+    sent something and we lost it. The completeness flag is what carries that;
+    the counts are simply unknown."""
+    state = AppState()
+
+    truncated_exchange(state, ip='10.0.0.9')
+
+    entry = state.connections[0]
+    assert entry.ip         == '10.0.0.9'
+    assert entry.n_samples  == 0
+    assert entry.battery_mv == BATTERY_INVALID
+
+
+def test_handle_client_incomplete_entry_never_claims_ota():
+    """The claim happens after the payload read, so a truncated upload cannot
+    have spent an arming — and the row must not say it did."""
+    state = AppState()
+    state.set_ota_armed(True)
+
+    truncated_exchange(state)
+
+    assert state.connections[0].ota_sent is False
+    assert state.ota_armed is True
+
+
+def test_handle_client_does_not_send_config_on_a_truncated_payload():
+    state = AppState()
+
+    conn = truncated_exchange(state)
+
+    assert conn.sendall.call_count == 0
+
+
+def test_handle_client_marks_a_normal_exchange_complete():
+    state = AppState()
+
+    exchange(state)
+
+    assert state.connections[0].complete is True
+
+
+def test_handle_client_logs_nothing_when_the_header_is_refused():
+    """Scope: an absurd header is refused before anything is read, so nothing
+    was promised and nothing was lost. Not an incomplete transfer."""
+    state = AppState()
+    conn  = MagicMock()
+    conn.recv.side_effect = [(0xFFFFFFFF).to_bytes(HEADER_SIZE_BYTES, 'little')]
+
+    handle_client(conn, ('10.0.0.1', 5000), state)
+
+    assert len(state.connections) == 0
 
 
 # --------------------------------------------------------------------------

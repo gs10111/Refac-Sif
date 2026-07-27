@@ -364,6 +364,45 @@ def add_entry(state, ip='192.168.1.5', ota_sent=False, minute=0):
         ))
 
 
+def test_history_marks_an_incomplete_transfer(client):
+    """Colour, position AND text — a row the operator must not read as a
+    successful acquisition with a low sample count.
+
+    Builds the entry inline rather than through add_entry: the shared helper has
+    a dozen borrowers, and widening it for a field that does not exist yet would
+    fail all of them for a reason none of them is about.
+    """
+    c, state = client
+    with state.lock:
+        state.connections.append(ConnectionEntry(
+            ip='192.168.1.9',
+            timestamp=datetime.datetime(2026, 5, 20, 14, 0, 0),
+            n_samples=0,
+            battery_mv=-1,
+            complete=False,
+        ))
+
+    body = c.get('/').data.decode()
+
+    assert '<tr class="incomplete-row">' in body
+    assert '>INCOMPLETA<'                in body
+
+
+def test_history_does_not_mark_a_complete_transfer(client):
+    """BORROWED SAFETY: an empty body satisfies both. The positive counterpart
+    is test_history_marks_an_incomplete_transfer.
+
+    Anchored on the rendered row, not the bare class name: the stylesheet
+    defines .incomplete-row on every page."""
+    c, state = client
+    add_entry(state, ip='192.168.1.5')
+
+    body = c.get('/').data.decode()
+
+    assert '<tr class="incomplete-row">' not in body
+    assert '>INCOMPLETA<'                not in body
+
+
 def test_index_shows_the_last_device_that_took_the_ota(client):
     """"Which sensor did I just send into AP mode" is the question the operator
     has while standing there. Pure render over the history — no inference."""

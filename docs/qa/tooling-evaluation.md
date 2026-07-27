@@ -459,6 +459,25 @@ is the half that was missing from every one of the four broken `grep`s.
 A check verified with all three halves — agrees, counts what it should, and can still
 fail — is the shell equivalent of a red test before a green one.
 
+**But none of that closes the class, and it is worth being honest about why.** Two more
+broken checks appeared *after* these rules were written, within an hour of each other,
+both inside commands authored to apply the measure-the-property rule: one broadened a
+pattern until it matched `lower_bound` sixty times through a vendored `.venv`; the other
+asked a line-level question about a block-level property and returned forty spurious
+hits.
+
+**A check is a stand-in by construction — that is what a check is.** So the class of
+broken checks cannot be emptied by writing better checks; sanity cases and negative
+controls lower the rate and do not reach zero. What actually prevented both of those from
+becoming findings was not the pattern quality:
+
+> **Neither author reported the number.** Both reported the broken pattern instead.
+
+That is the durable remedy, and it is a reporting discipline rather than a technical one.
+It also generalises past greps to every measurement in this document — the classification
+drift, the moving tree, the declaration count read as an outcome. In each case the
+technical fix helped and the reporting discipline is what held.
+
 Two things follow. The mistake is not about carelessness with lines of code: it is
 categorising by resemblance, and it operates on strategies and predictions as readily
 as on `grep` patterns. And it is the strongest evidence in this document for the

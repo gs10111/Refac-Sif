@@ -26,6 +26,8 @@ class ConnectionEntry:
     n_samples:  int
     battery_mv: int
     ota_sent:   bool = False   # this device received update=1
+    complete:   bool = True    # the promised payload arrived; False means it did not
+                               # and the device has already discarded it
 
 
 class AppState:

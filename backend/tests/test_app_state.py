@@ -218,6 +218,17 @@ def test_connection_entry_ota_sent_defaults_false():
     assert entry.ota_sent is False
 
 
+def test_connection_entry_complete_defaults_true():
+    """A row means a completed exchange unless it says otherwise."""
+    entry = ConnectionEntry(
+        ip='10.0.0.1',
+        timestamp=datetime.datetime.now(),
+        n_samples=10,
+        battery_mv=3800,
+    )
+    assert entry.complete is True
+
+
 def test_connection_entry_records_ota_sent():
     entry = ConnectionEntry(
         ip='10.0.0.1',
