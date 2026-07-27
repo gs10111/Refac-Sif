@@ -348,10 +348,20 @@ an observation of a moving subject carries its full weight, because the half tha
 be wrong is separated from the half that cannot.
 
 **And the third piece is provenance, which is what makes a number auditable after the
-fact:** whoever posts a measurement states **who ran it** and **against which tree
-state**.
+fact:** whoever posts a measurement states **who ran it**, and **against which tree
+state — scoped to the paths the measurement depends on.**
 
-> *gomi ran the backend suite, tree clean at `a06a3c5`, 129 / 115.*
+> *gomi ran the grep over `lib/ src/ test/`, those paths clean at `a06a3c5`.*
+
+**Not** "tree clean at `a06a3c5`". In a worktree shared by several owners the global
+claim is almost always false — one owner is nearly always dirty somewhere — so it is a
+statement people learn to write **without checking**, and it is then false on the day it
+matters. That is the same degradation as every broken check above: an assertion that can
+be false while the thing it protects is fine stops being read.
+
+The scoped form is narrower, usually true, auditable, and does not go stale the moment
+another owner touches their own half. It also lets two provenance claims coexist without
+contradiction when they cover different paths.
 
 Three investigations in one afternoon went into numbers taken mid-edit, and in every
 case the missing information was not who was *allowed* to run it — it was *when*. A
