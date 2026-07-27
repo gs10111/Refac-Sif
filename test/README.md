@@ -35,6 +35,10 @@ pio test -e mutant_imu_stays_awake_on_trigger_sleep
 pio test -e mutant_send_from_index_zero
 pio test -e mutant_clear_ota_flag_before_ap
 pio test -e mutant_disarm_writes_unconditionally
+pio test -e mutant_max_acq_off_by_one
+pio test -e mutant_radio_off_only_on_success
+pio test -e mutant_frame_capacity_rounds_up
+pio test -e mutant_battery_read_before_upload
 ```
 
 A green suite proves the tests *can* pass. It does not prove they can *detect*
@@ -54,6 +58,10 @@ rather than enforcing a behaviour.
 | `mutant_store_when_not_ready` | `MUTANT_STORE_WHEN_NOT_READY` | frames are stored with `DATA_RDY` clear, filling the buffer at the polling rate instead of the ODR | `test_acquisition` T32 | T33, T33b — they set the fake ready, so the mutation is invisible to them |
 | `mutant_clear_ota_flag_before_ap` | `MUTANT_CLEAR_OTA_FLAG_BEFORE_AP` | the OTA flag is spent before the access point exists — production's order | `test_ota` T50 (call sequence), T51, T52 | T54, T55, T56, T57 — none reach that function with the flag set |
 | `mutant_disarm_writes_unconditionally` | `MUTANT_DISARM_WRITES_UNCONDITIONALLY` | the disarm writes on every config receipt instead of only on the transition — right state, one NVS write per connection forever | `test_ota` T56 | **T55, T57** — the flag ends correct either way; the cost is flash endurance, not behaviour |
+| `mutant_radio_off_only_on_success` | `MUTANT_RADIO_OFF_ONLY_ON_SUCCESS` | the radio is turned off only inside the successful-connect branch — R7 as it shipped | `test_cycle` A21, A23 | **A20** — on the happy path both versions turn it off, which is why reading the function and believing it let R7 ship |
+| `mutant_frame_capacity_rounds_up` | `MUTANT_FRAME_CAPACITY_ROUNDS_UP` | the ring claims 38889 frames spanning 700002 bytes over a 700000-byte allocation — two bytes past the end, on every wrap | `test_ringbuffer` `..._never_spans_more_bytes_than_it_was_given` and T06; `test_sample_store` T34 | every test that constructs a ring with an explicit frame count — they never call the function |
+| `mutant_max_acq_off_by_one` | `MUTANT_MAX_ACQ_OFF_BY_ONE` | `belt_next` uses `>` for `>=`, so a cycle runs one acquisition more than configured | `test_belt_cycle` T15 **and T31d** | T14 — it only walks `done` from 1 to max-1, where both operators agree |
+| `mutant_battery_read_before_upload` | `MUTANT_BATTERY_READ_BEFORE_UPLOAD` | the ADC is sampled before any bytes go out, radio idle, instead of after the payload as production does at `main.cpp:259` | `test_transmit` A27b, which pins the byte count at the moment of the read | **every other test** — they assert the value on the wire, identical either way |
 | `mutant_send_from_index_zero` | `MUTANT_SEND_FROM_INDEX_ZERO` | the uploader sends only the first range, from index 0, ignoring `tail` — R8 verbatim | `test_transmit` T45 | **every other test in the suite** — they use an unwrapped ring, where the two implementations agree byte for byte. That is why R8 survived review: the wrong code is correct for the first thirteen minutes |
 | `mutant_imu_stays_awake_on_trigger_sleep` | `MUTANT_IMU_STAYS_AWAKE_ON_TRIGGER_SLEEP` | `PowerManager` skips `imu.sleep()` on the ext0 path only — R5 on the sleep that lasts hours | `test_power` T38 | **T37**, deliberately: breaking one path proves the two are pinned independently, which killing both would not |
 | `mutant_skip_allocation_check` | `MUTANT_SKIP_ALLOCATION_CHECK` | `make_sample_ring` does not check the allocation, building a full-capacity ring over a null pointer — R1 restored | `test_sample_store` T35, T36b | **T36** — nothing is written anyway, because `RingBuffer` refuses a null storage pointer. The defence is in the ring, not in the check |
@@ -68,13 +76,33 @@ Each flag is documented at the `#ifdef` that implements it. Rules:
   simply is not there. One grep settles it:
 
   ```
-  grep -rho '^#ifdef MUTANT_[A-Z_]*' lib src | sort -u | wc -l   # flags in source
-  grep -c '^\[env:mutant_' platformio.ini                        # envs
-  grep -c '^| `mutant_' test/README.md                           # table rows
+  grep -rhoE '^#ifdef MUTANT_[A-Z][A-Z_]*' lib src | sort -u | wc -l   # flags in source
+  grep -cE '^\[env:mutant_' platformio.ini                            # envs
+  grep -cE '^\| `mutant_' test/README.md                              # table rows
   ```
 
-  Three equal numbers, or something is missing. Run it before claiming a mutation
-  round is done.
+  Three equal numbers, or something is missing. Better, because it catches BOTH
+  directions — a flag with no env, and an env that compiles clean code and reports
+  success in the same shape as one that ran:
+
+  ```
+  comm -3 <(grep -rhoE 'MUTANT_[A-Z][A-Z_]*' lib/ | sort -u) \
+          <(grep -oE  'MUTANT_[A-Z][A-Z_]*' platformio.ini | sort -u)
+  ```
+
+  Empty output is the pass condition. Require a letter after the prefix: a looser
+  `MUTANT_[A-Z_]*` also matches the bare `MUTANT_` inside prose like "-DMUTANT_*
+  flags", and reports a phantom asymmetry from a comment.
+
+  Run these against a tree nobody is editing. A count taken mid-edit measures the
+  editor, not the code.
+- **A mutation's name must match what it does.** One here advertised "wraps by
+  bytes" and actually froze the head at zero: `(head * 18 + 1) / 18` advances one
+  BYTE, and the truncating divide means the frame index never moves. Five tests
+  died and the run looked like a strong result — the three unnamed deaths are the
+  only reason anyone went looking. A mutation whose behaviour does not match its
+  row makes the report claim coverage that was never verified, and it fails
+  *convincingly*.
 - **Name which tests must die, before the run.** A predicted *count* is not a
   self-check: "expect 3 failed" is satisfied by the wrong three. That is precisely
   what happened here — three failures arrived from an older mutation while two new
@@ -106,6 +134,64 @@ Each flag is documented at the `#ifdef` that implements it. Rules:
   different one — but the table must not imply every assertion earns its place
   against every flag.
 
+## Predict catchers, never a pass count
+
+A count of test declarations is not a prediction of a test outcome, and the two look
+identical in a message. `grep -c RUN_TEST` returning 73 became "expect 73 passed" in
+a hand-off here; the run reported 74 test cases with one failure, and both halves of
+the prediction were wrong in a way that read as confident.
+
+Predict which tests must DIE under each mutation and which must LIVE. That is what
+the harness rules ask for anyway, and it is the one form a static grep cannot
+masquerade as.
+
+(PlatformIO's header counts a program-level entry per FAILING SUITE on top of the
+individual results: 73 tests with one failing suite reports 74 test cases, with two
+failing suites 75. The suite total and the outcome total are different numbers and
+neither is wrong.)
+
+## Assert the shape where the shape is the subject
+
+`test_cycle` holds the worked pair — same file, same round, opposite answers:
+
+- **A21**, the failure side: `bytesWritten() == 0`. Fixture-independent. Nothing is
+  written when the connect fails, whatever the pin or the clock do. Keep exactly.
+- **A20**, the success side: an exact byte count is a function of pin-and-clock
+  arithmetic that has nothing to do with A20's subject, which is that the radio ends
+  up off. The wire format already has its guards in `test_transmit` T43 and T44,
+  against a ring those tests control directly. Here the count is corroboration.
+
+So the rule is not "counts beat bools". It is: **assert the exact shape where the
+shape is the subject, and assert the invariant where it is not** — and where you do
+assert a count, derive it from the constant that drives the fixture. A comment
+explaining a literal is itself a stand-in for the property; change the fixture and
+the prose goes stale with nothing connecting them.
+
+## Stronger is not strictly stronger
+
+An exact byte count detects more than a bool that says a write finished — a bool
+cannot see a truncated payload. It is also less stable: a count moves when the
+fixture moves, and one in `test_cycle` broke the first time it met a fixture that
+stored three frames where the expectation modelled one.
+
+Keep the count. The failure modes are not symmetric:
+
+| | fails when | how it is found |
+|---|---|---|
+| bool | never, while the code is wrong | an incident, weeks later |
+| byte count | at once, while the code is right | the next run, before anything ships |
+
+The mismatch A20 exposed **existed before the count did**. The bool passed whatever
+the fixture stored, so the disagreement between the author's model and the fixture sat
+there invisibly. The count did not introduce a fragility; it exposed one. A test that
+cannot be wrong about its fixture is not a safer test — it is a test that has stopped
+asking.
+
+A false negative is silent and survives; a false positive is loud and is paid for
+immediately. Buy loud wrongness over quiet rightness. When one of these breaks, fix
+the expectation — **derive it from the constant that drives the fixture** — rather
+than swapping it back for a bool.
+
 ## Checks a test cannot make
 
 Some properties are facts about a declaration rather than about any behaviour a
@@ -114,7 +200,7 @@ whichever way the declaration goes, which is worse than admitting the gap. Use a
 grep, and keep it here where it will be run.
 
 ```
-grep -c 'RTC_DATA_ATTR' src/app/app.cpp                    # must be exactly 1
+grep -c '^RTC_DATA_ATTR' src/app/app.cpp                   # must be exactly 1
 grep -rn 'your_ssid\|your_password' src include lib       # must return nothing
 git check-ignore include/secrets.h                         # must succeed
 ```

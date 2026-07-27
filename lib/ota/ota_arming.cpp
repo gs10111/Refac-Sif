@@ -14,11 +14,16 @@ OtaEntry enter_ota_if_armed(IAccessPoint &accessPoint,
     // Never by env:native or env:pico32.
     // Run it:  pio test -e mutant_clear_ota_flag_before_ap
     //
-    // BREAKS: the flag is spent before the access point exists — production's order
-    //         (main.cpp:78 then :81), with the page started later still.
-    // WHY:    on the path where everything works, the two orderings are
-    //         indistinguishable. It only differs once something has already gone
-    //         wrong, which is why it survived in production unnoticed.
+    // BREAKS: the flag is spent before the access point exists.
+    //
+    // NOT A PRODUCTION DEFECT WE FIXED. This IS production's order (main.cpp:78
+    // then :81, page later still), and the happy path is byte-identical either
+    // way — flag cleared, page served. The orders diverge only when softAP()
+    // succeeds and the page does not, which is DEC-0 clause (d): a latent bug on a
+    // path the reachable one never touches, where the correct implementation is
+    // preferred. It is a clause (d) preference, not a listed regression, and three
+    // tests killing this mutation should not be read as production having been
+    // broken.
     // CAUGHT BY: test_ota T50 (on the call sequence), T51 and T52 (on the flag
     //         surviving a failure).
     // SURVIVED BY: T54, T55, T56, T57 — none of them reach this function with the
@@ -35,6 +40,12 @@ OtaEntry enter_ota_if_armed(IAccessPoint &accessPoint,
 #else
     // The operator's request is the only record left once the backend has spent its
     // arming, so it is not discarded until the page is genuinely reachable.
+    //
+    // Production clears between softAP() and configureOtaServer() (main.cpp:78,
+    // :81, :84) and ignores softAP()'s return. That is not a defect on any path the
+    // shipped firmware reaches — the two orders agree whenever both steps succeed.
+    // This is the DEC-0 clause (d) preference: correct on the latent path, identical
+    // on the reachable one.
     if (!accessPoint.start(ssidPrefix, password))
         return OTA_BRINGUP_FAILED;
 

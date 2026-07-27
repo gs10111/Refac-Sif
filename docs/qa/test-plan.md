@@ -84,7 +84,8 @@ defect** — it freezes an unreviewed decision into the suite.
 | A19 | The timestamp is the one sampled **before** the SPI burst. | host | `test_frame_timestamp_is_the_one_passed_to_step`. The interface makes the late-timestamp regression inexpressible. |
 | A20 | `DATA_RDY` clear → nothing stored. | host | `test_not_ready_samples_are_not_stored` + `mutant_store_when_not_ready` |
 | A21 | Allocation is exactly 700000 B; capacity 38888 frames; usable 699984 B. | host | `test_allocation_requests_exactly_the_production_buffer_size` + 3 `static_assert`s in `board.h:65-69` |
-| A22 | **(DEC-1)** Every payload length is a whole number of frames: `bytes % 18 == 0`. | **open** | Guaranteed by frame-addressed capacity, but no test asserts it. Add `bytesStored() % SAMPLE_SIZE_BYTES == 0` after a wrap, and mutation M3. |
+| A22 | **(DEC-1)** Every payload length is a whole number of frames: `bytes % 18 == 0`. | **not testable — by design** | Enforced by the *representation*, not by logic: the ring is addressed in frames, so every byte quantity it can report is a frame count × 18. `bytesStored()` is `_count * _frameSize`; `plan().totalBytes()` is `_count * _frameSize` unwrapped and `_frameCapacity * _frameSize` wrapped. `% 18 == 0` cannot be false for any counter, head, tail or mutation. Asserted where it lives: `board.h:77` `static_assert`. See [the A22 lesson](#the-a22-lesson-a-structural-fix-leaves-no-mutation-behind). |
+| A22b | `frameCapacityFor(bytes, 18)` never spans more bytes than it was given. | host | **Replaces A22.** Rounding *up* gives 38889 frames spanning 700002 B over a 700000 B `ps_malloc` — a two-byte PSRAM **heap overrun on every wrap**, which is worse than the misalignment A22 was written for, and falsifiable. `test_frame_capacity_never_spans_more_bytes_than_it_was_given` over 700000, 71, 72, 17 + `mutant_frame_capacity_rounds_up`. 72 divides evenly and agrees under both versions — it is in the list to prove the others carry the weight. |
 | A23 | A failed allocation is fatal, the ring reports zero capacity, and no sample is ever written. | host / **HW** | `test_allocation_failure_calls_fatal`, `test_failed_allocation_yields_a_ring_that_reports_no_capacity`, `test_no_sample_is_ever_written_when_allocation_failed` + `mutant_skip_allocation_check`. A *real* PSRAM failure is H4. |
 | A24 | Not wrapped → one range from index 0 (byte-identical to production). Wrapped → two ranges, tail first. | host | `test_plan_is_one_range_from_zero_when_not_wrapped`, `test_plan_is_two_ranges_starting_at_tail_when_wrapped`, `test_append_overwrites_oldest_frame_when_full`, `test_bytes_stored_never_exceeds_capacity` |
 | A25 | The **live** transmit sends both ranges when wrapped, oldest first. | host | Closed by `17c762f`. `test_transmit_sends_oldest_first_when_the_ring_has_wrapped` + `mutant_send_from_index_zero`. |
@@ -94,7 +95,8 @@ defect** — it freezes an unreviewed decision into the suite.
 | # | Criterion | Status | Test / note |
 |---|---|---|---|
 | A26 | Uplink per connection: `[4 B uint32 LE total][N × 18 B][2 B uint16 LE battery_mv]`, header little-endian. | host | Closed by `17c762f`. `test_transmit_writes_header_then_samples_then_battery`, `test_header_is_total_sample_bytes_little_endian`. Also pinned from the reader end by `backend/tests/test_recv_exact.py`. |
-| A27 | Battery = `analogRead(36)` mapped `0..4095 → 0..19803` mV. | **HW** | H11. Verified by reading only (disclosed by gomi); the two-line pin lands with round 7's follow-up. |
+| A27 | Battery = `analogRead(36)` mapped `0..4095 → 0..19803` mV. | **HW** | H11. The *conversion* is byte-identical. |
+| A27b | The battery is sampled **after** the payload is sent, under transmit load. | **open — ruled restore** | Production reads the ADC at `main.cpp:259-261`, after the send loop closes at `:256`, radio hot from ~700 kB of TX. Round 9 evaluated `_battery.readMv()` as a call argument, i.e. before the connection even opens. Same field, same units, **different physical conditions** — and the loaded reading is the diagnostic, because sag under load is how a tired cell announces itself. Also breaks corpus comparability: every historical `battery_mv` was measured under load. Fix: pass `IBatterySense&` into `upload_acquisition` and read immediately before writing the battery bytes. **The test must assert the order**, not just that the read happened. |
 | A28 | The ring is cleared **once the connection opened**, even if the write then failed. It is preserved only when the connection never opened. | host | `test_ring_is_cleared_once_the_connection_opened_even_if_the_write_failed`, `test_ring_is_preserved_when_the_connection_never_opened`. **Correction:** an earlier revision of this document said "only a successful send resets the ring". That was wrong — it restated a code comment instead of reading the original. `main.cpp:233-265`: the send loop `break`s on a failed write, flow falls through to the battery write, and `IIM.tail = 0; IIM.head = 0;` runs regardless. Data loss on a mid-transmit failure is **matches-original**. |
 | A28b | A missing config response leaves the config alone but does not resurrect the data. | host | `test_missing_response_leaves_the_config_but_not_the_data`, `test_transmit_reports_failure_on_short_write` |
 | A29 | The radio goes off at the end of every iteration, on every path. | struct | `app.cpp:144-151` says so explicitly: *"STRUCTURAL, not tested"*. R7 closed by construction; round 9 extracts it. |
@@ -133,7 +135,8 @@ defect** — it freezes an unreviewed decision into the suite.
 
 | # | Criterion | Status | Test / note |
 |---|---|---|---|
-| A45 | **(DEC-2)** No real SSID or password anywhere in the tree, and a missing secret **fails the embedded build loudly**. | **open** | Not implemented. `src/config/server_config.cpp` still holds `"your_ssid"`/`"your_password"`; no `secrets.h`, no `extra_configs` in `platformio.ini`, no `.gitignore` line. A build with no secret currently produces a **mute device**, which is exactly what DEC-2 forbids. Public repo. |
+| A45 | **(DEC-2)** No real SSID or password committed, and a missing secret **fails the embedded build loudly**. | host — **one git check outstanding** | Landed. `include/secrets.h` ignored at `.gitignore:4`, `include/secrets.example.h` committed as its counterpart, and `src/config/network_config.h:19` raises `#error` so a missing secret fails the build rather than compiling a placeholder that flashes a mute device. **`.gitignore` does not untrack an already-tracked file** — `git ls-files include/secrets.h` must be empty, and `git log --all -S<secret>` must be empty, before this is closed. Public repo; a non-empty result is a credential-rotation incident, not a QA finding. |
+| A45b | Checking A45 must not itself leak the secret. | process | A content `grep` for the credential strings **prints them**. Use `git ls-files` and `git log -S`, never a content grep whose output might be pasted. |
 | A46 | The native build needs no secret. | host | `env:native` does not compile `src/`. Holds today by construction; will need re-checking when A45 lands. |
 | A47 | Nothing under `lib/` includes `Arduino.h`, `SPI.h`, `WiFi.h` or `esp_*`. | host | Enforced by `env:native` failing to link. |
 
@@ -151,7 +154,7 @@ the observation that would mean a regression.
 | **H3** | **Deep-sleep current** | µA meter in series with the battery. Sample in `ARM_TRIGGER` sleep and in timer sleep. Note the brownout detector is disabled (`app.cpp:21`) and PSRAM is populated. | Above the battery budget for 240 min × the duty cycle. Compare against the **original firmware on the same board** — DEC-0 makes the original the reference, not a datasheet figure. |
 | **H4** | **Real `ps_malloc(700000)`** | Boot a pico32 with PSRAM; confirm the ring reports 38888 frames. Then boot a board with PSRAM disabled (drop `-DBOARD_HAS_PSRAM`) and confirm the halt. | Allocation succeeds but capacity ≠ 38888; or a failed allocation that does **not** halt (that is R1 restored — and per `mutant_skip_allocation_check` the failure mode is silence, not a crash). |
 | **H5** | **SPI sampling at ODR 50 Hz** | Acquire for a known wall-clock interval with the trigger held off. Count frames received server-side and diff consecutive frame timestamps. | Rate materially off 50 Hz; timestamp deltas not ≈20 ms; or gaps that indicate `DATA_RDY` is being polled faster than the ODR and frames are being dropped or duplicated. |
-| **H6** | **`RTC_DATA_ATTR` semantics (R9)** | Print `stage` at boot. (a) timer deep sleep → wake: expect retained. (b) `ESP.restart()`: expect the initial value. (c) power cycle: expect the initial value. (d) EN-pin reset: expect the initial value. | Any case where a **non-deep-sleep reset retains the stage** breaks A1 — the device could resume mid-cycle after a crash. This is the single most load-bearing unverified assumption on the branch. |
+| **H6** | **`RTC_DATA_ATTR` semantics (R9)** — **highest-value item on this list** | Print `stage` at boot. (a) timer deep sleep → wake: expect retained. (b) `ESP.restart()`: expect the initial value. (c) power cycle: expect the initial value. (d) EN-pin reset: expect the initial value. ~15 minutes. | Any case where a **non-deep-sleep reset retains the stage** breaks A1 — the device could resume mid-cycle after a crash. **It now load-bears twice.** Round 9 established that the OTA retry depends on the same fact: after `ESP.restart()` arms OTA, `stage` reloading to `ARM_TRIGGER` is what makes the device deep-sleep instead of transmitting, which is what gives a failed AP bring-up a second attempt. If RTC memory survives a software reset instead, the device transmits in the same wake, `update=0` disarms, and the operator gets **zero** retries rather than two. One bench check answers reset safety *and* the OTA retry the operator experiences. |
 | **H7** | **NVS flag across `ESP.restart()`** | Arm OTA from the web UI, let a device transmit, watch it restart, confirm the AP appears. Then power-cycle mid-window and confirm it does **not** come back into OTA. | The flag not surviving the restart (no AP — feature dead) or surviving past its clear (a permanent OTA loop — device unreachable in the field). Both are field-fatal and neither is host-testable. |
 | **H8** | **SoftAP OTA upload** | Join `Update driver - <MAC>` / `12345678`. `GET /version`, upload a build via `/update`, confirm reboot into the new version. Separately, join and do nothing for 5 min and confirm the restart. | Upload fails or bricks; `/version` unchanged after a reported success; the 5 min timeout does not fire (a device that never leaves the AP is off the belt permanently). |
 | **H9** | **Brownout during WiFi TX on battery** | Full cycle on a battery at low state of charge, radio at 240 MHz transmitting ~700 kB. | Reset or truncated transmission. The brownout detector is **disabled**, so the failure mode is corruption rather than a clean reset — check the server-side byte count against the header. |
@@ -193,14 +196,145 @@ A29 rest on reading the code.
 |---|---|---|---|---|
 | **M1** | `MUTANT_MAX_ACQ_OFF_BY_ONE` — `belt_cycle` compares `>` where it compares `>=` (or the reverse). | A13 | "5 acquisitions" is the number bigboss specified and the one the operator counts on the history page. An off-by-one gives 4 or 6 and every other test stays green. The original's own `loopCounter > nSamples` is exactly the kind of boundary that survives a refactor wrong. | `test_cycle_sleeps_by_timer_after_max_acquisitions`, `test_max_acquisitions_of_zero_ends_the_cycle_immediately`. If **only** the zero test dies, the boundary at 5 is not pinned. |
 | **M2** | `MUTANT_FRAME_FIELD_ORDER` — swap `gyro` and `accel` within an axis when the frame is assembled. | A18 | The 18-byte layout is the contract with the CSV corpus *and* with `pyFiles/win_server.py`. A silent swap produces a file that parses cleanly, plots plausibly, and is wrong. Nothing downstream would ever reject it. | `test_stored_frame_is_18_bytes_in_wire_order` only. If it survives, that test is checking length rather than order. |
-| **M3** | `MUTANT_RING_WRAP_BY_BYTES` — advance the tail by one byte instead of one frame on overwrite. | A22, A24 | This is DEC-1's whole point. A byte-misaligned wrap makes every subsequent frame garbage while lengths and counts stay plausible — the exact failure the frame-addressed design was chosen to prevent. Prevention with no detector is a design comment. | `test_plan_is_two_ranges_starting_at_tail_when_wrapped`, `test_append_overwrites_oldest_frame_when_full`. Add the `% 18 == 0` assertion from A22 first — I expect it is the only thing that reliably dies. |
+| ~~M3~~ | ~~`MUTANT_RING_WRAP_BY_BYTES`~~ — **withdrawn.** Superseded by `mutant_frame_capacity_rounds_up`. | A22b | R13 has no local expression left to break; see below. My prediction here — "add the `% 18 == 0` assertion first, I expect it is the only thing that reliably dies" — was wrong in both halves: that assertion cannot die, and three tests I did not name did. | — |
 | **M4** | `MUTANT_PARSE_ACCEPTS_SHORT_FRAME` — `parse_server_config` fills what it has and returns true. | A31 | Half a config is worse than none: a truncated response could set `sleep_min` from two stray bytes and put a device to sleep for an arbitrary time. The guard exists; nothing has shown it can fire. | `test_parse_config_rejects_frame_shorter_than_10_bytes`. A near-certain kill — which per the harness's own rules makes it a formality. Worth wiring anyway *because A31 is not on the live path*: the mutation documents that the guard is real while the wiring is still missing. |
 | **M5** | `MUTANT_ENDCYCLE_RESETS_ONLY_IDLE_PATH` — reset the counter on the idle path only. | A17 | The original resets on both (`ICM42688P.cpp:438` and `:445`). Resetting on one leaks into the next cycle, and the symptom is a device that does 5 acquisitions on one wake and 1 on the next. | `test_acquisition_count_resets_when_the_cycle_ends_by_either_path`. Named after the behaviour, so if it survives the test is checking one path under a two-path name. |
 
 M1 and M3 are the two I would actually spend the round on. M2 is cheap and protects
 the only contract with a decade of historical data behind it.
 
-### 3.3 One mutation I do **not** recommend
+### 3.3 The A22 lesson: a structural fix leaves no mutation behind
+
+A22 was my request, and my argument for its ordering — *write the assertion first so the
+mutation has a reliable detector* — was wrong for a reason worth more than the test was.
+
+**R13 was a byte modulus of 700000 over 18-byte samples. DEC-1 deleted the byte modulus
+entirely.** So there is no one-line mutation that restores R13: restoring it means
+restoring the old representation. The defect has no local expression left.
+
+Three rules follow, and they generalise past this ring:
+
+1. **An invariant guaranteed by the representation cannot be defended by a test.**
+   Assert it and you get a tautology that reads like a safety net. When a design makes a
+   bad state unrepresentable, the artefact is a `static_assert` on the type — never a
+   runtime assertion, and never an entry in a mutation's `CAUGHT BY` list.
+2. **When a fix is structural, the old defect stops having a mutation.** What you defend
+   instead is whatever *new* thing can go wrong in the new representation. Here that is
+   `frameCapacityFor` rounding up — a PSRAM heap overrun, strictly worse than the
+   misalignment, and falsifiable.
+3. **A detector must be written against the representation that will exist when the
+   mutation runs**, not against the defect as it was originally reported. My ordering
+   argument assumed the second and got the first wrong.
+
+**The sub-pattern that produced four of the day's defects: measuring a stand-in for
+the property rather than the property.**
+
+| Artefact | Measured | Should have measured |
+|---|---|---|
+| A22 (test) | a frame-derived quantity, `_count * 18` | the byte layout after a wrap |
+| Two invariant `grep`s | the word `RTC_DATA_ATTR`, the token `MUTANT_` in prose | declarations, and flags with a letter after the prefix |
+| A README `grep` | a text shape that table rows do not have | the table rows |
+| A20 (test) | an arithmetic snapshot of one fixture, `HEADER + SAMPLE + BATTERY` | everything the ring held reached the wire |
+| A run prediction | a static count of `RUN_TEST` declarations, written as *"expect 73 passed"* | what the run would actually do — Unity counted 74, one failed |
+
+Each is individually obvious in hindsight and each shipped past a careful author. The
+tell is the same every time: **the stand-in is easier to write than the property, and
+it agrees with the property on the case in front of you.** A22's ring size, the greps'
+current file contents, A20's three-frame fixture — change any of those and only the
+stand-in moves.
+
+The last row is the one worth dwelling on, because it landed in the *prediction* rather
+than in the code or the check. **A count of test declarations is not a prediction of a
+test outcome, and must not be written in the same sentence shape.** A static `grep` and
+a run result are indistinguishable once they are in a message, and both read as
+confident. Predict the **catchers** — which named tests must die — which is what the
+mutation harness rules already require and which cannot be produced by counting
+anything.
+
+A20 also carries the general lesson, and the useful form of it is not "strength versus
+brittleness" — it is **assertion-subject match**.
+
+An exact byte count *is* stronger than a `bool` that a write finished: it detects a
+truncated write that still reports success. But that strength only comes free where the
+byte count **is** the subject:
+
+| Assertion | Subject | Exact count is… |
+|---|---|---|
+| A21 — `bytesWritten() == 0` after a failed connect | nothing goes out | **fixture-independent.** Strictly stronger than a bool, no coupling. Keep. |
+| T43/T44 — the framing in `test_transmit` | the wire format itself | the right guard, against a ring the test controls directly |
+| A20 — `bytesWritten() == N` after a successful iteration | *the radio ends up off* | **coupled to fixture internals with nothing to do with its subject** — the pin threshold and the poll count. The bool was invariant to those. |
+
+So "strictly stronger" holds on A21 and fails on A20, and the reason is not brittleness
+in general: **an assertion should be as strong as possible about its own subject, and
+strength borrowed from another subject is coupling without benefit.** In A20 the count
+is corroboration, not the guard — the guard for the wire format already exists
+elsewhere.
+
+The failure modes still argue for keeping counts where they belong: a bool fails as a
+*false negative*, silently and indefinitely; a count fails as a *false positive*, loudly
+and at once. Buy loud wrongness over quiet rightness. But buy it for the assertion whose
+subject it is.
+
+Where a count is kept, **derive it from the fixture rather than modelling it.** A20 now
+reads:
+
+```c
+static const uint32_t kHighReads = 3;   // ScriptedPin threshold
+ScriptedPin pin(kHighReads);
+TEST_ASSERT_EQUAL_UINT32(HEADER_SIZE_BYTES + kHighReads * SAMPLE_SIZE_BYTES +
+                         BATTERY_SIZE_BYTES, transport.bytesWritten());
+```
+
+Two details in that worth more than the fix. **The constant is named after what it *is*,
+not after what it implies** — `kHighReads` is the pin threshold; that it also equals the
+frame count is the non-obvious consequence, and naming it `kFramesBeforeStop` would have
+smuggled the derivation into the identifier and hidden the step that needs checking.
+
+And the comment now carries **only what cannot be derived**: that a successful iteration
+stores `kHighReads` frames and not `kHighReads + 1`, because the pin falls on the next
+read and the stopping iteration returns before storing. That fact takes a trace to
+recover; the arithmetic does not.
+
+> **Derive what can be derived; write down only what cannot.**
+
+That is the constructive form of the whole stand-in pattern. A stand-in appears wherever
+something derivable got restated by hand — and prose restating an arithmetic that the
+code could compute is the same defect as a test asserting a representation instead of a
+behaviour.
+
+And a hazard for the harness itself, from the same investigation: **a mutation whose
+name does not match its behaviour is worse than a missing one.** `mutant_ring_wraps_by_bytes`
+advertised a byte-wrap and actually did *never advances* — `+1` meant one byte where one
+frame was intended, and `/18` truncated it away. Five tests died and the report read as
+coverage of something that was never exercised. **The extra deaths made it look more
+convincing, not less**: three unnamed tests dying is what prompted the trace. Had the
+prediction named five, it would have passed as a good result.
+
+That is the argument for the harness's existing rule — name the catchers *before* the
+run — extended one step: **also check that the mutation does what its name says**, by
+tracing its arithmetic rather than reading its comment.
+
+### 3.4 Reading `pio test` output without inventing findings
+
+**The header count is not the test count.** PlatformIO adds one program-level entry per
+*failing or errored suite* on top of the individual test results:
+
+| Run | Header | Actual |
+|---|---|---|
+| all green | `71 test cases: 71 succeeded` | 71 tests + 0 |
+| one failing suite | `74 test cases: 1 failed, 72 succeeded` | 73 tests + 1 |
+| two failing suites | `75 test cases: 4 failed, 69 succeeded` | 73 tests + 2 |
+
+The same rule explains an earlier `13 test cases` for 11 assertions — 11 + 2 errored
+suites. **This has looked like a finding three times in one day**, and every time it was
+settled by comparing runs rather than by reasoning about the tool.
+
+Practical consequences:
+- A rising header count during a red run is not new tests appearing.
+- **Predict catchers, never a pass count.** The named-tests-that-must-die rule the
+  harness already imposes is immune to this; a count is not.
+
+### 3.5 One mutation I do **not** recommend
 
 `MUTANT_COUNT_SUCCESSFUL_TRANSMITS_ONLY` looks like the obvious guard for P5/A12, and
 it cannot be written: `AcquisitionService` has no way to learn whether a transmit

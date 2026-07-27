@@ -271,6 +271,87 @@ pressure at all, the artefact wins.
 That is also why the countermeasure is a second reader rather than more care. Care is
 what all seven of these already had.
 
+#### The eighth is a different failure, and the second reader does not fix it
+
+Tracing why a test failed to detect the mutation it was written for, I computed
+`((0*18+1) % 72) / 18 = 0` — the mutation's head index never advances, so it did not do
+what its name and comment claimed. **I saw that and dropped it**, filed as incidental
+arithmetic, because it did not serve the conclusion I was already building about the
+test. The report I sent said the mutation reached the ring and never mentioned that it
+was not the mutation it advertised.
+
+That is not the artefact being more available than the question. The answer *was* in
+hand. It is **relevance-filtering against a hypothesis in flight** — a fact gets
+discarded for not fitting the argument being assembled.
+
+**The countermeasure is different, and this is the important part.** A second reader
+fixes availability, because the second reader has not yet built the conclusion. It does
+*not* reliably fix this one: the second reader is usually reading the first reader's
+framing, and the discarded fact was already excluded there. Here it was caught only
+because the other reader was tracing the same code **without a conclusion to protect** —
+and had he not, the round would have shipped with a mutation whose name lied and five
+deaths that read as coverage.
+
+The rule that does address it:
+
+> **When you compute something that does not fit the argument you are making, report it
+> anyway and say it does not fit.**
+
+Cheap, and it is the only defence that works from inside the head that is doing the
+filtering.
+
+#### A third class: measuring a moving target
+
+Late in the same session, three consecutive runs of one unchanged command reported
+**73, 62 and 61** test cases — the suite was being rewritten under the compiler. One of
+those runs said `1 failed`, which is exactly the shape of a finding.
+
+It happened to me in the same window. A `grep` for a mutation's build env returned
+nothing while its `#ifdef` was already in the source, and I was one message from
+reporting *"this mutation has no env"* — the same real gap found hours earlier, and
+this time an artefact of an editor mid-save. Minutes later the count was consistent.
+
+So there are **three distinct classes, with three distinct countermeasures**, and
+conflating them is why the first two kept recurring:
+
+| Class | Failure | Countermeasure |
+|---|---|---|
+| Availability | The artefact in front of you answers; the question behind it requires going and looking | A second reader, split by angle |
+| Relevance-filtering | You compute something that does not fit the argument in flight, and drop it | Report it anyway and say it does not fit — the second reader inherits your framing and cannot catch this |
+| **Moving target** | The thing measured changes between the measurement and the claim | **Sequencing.** Neither care nor readers help: both readers measure the same moving tree |
+
+The third is the one nobody defends against, because every measurement *feels*
+instantaneous. It caught all three readers within ten minutes, including both who had
+just named it.
+
+It has **two** remedies, and the second is the useful one:
+
+**Sequencing**, for whoever measures — a stated quiet window: the tree is untouched,
+then the run happens, then the claim. Anything measured outside it is *inadmissible*,
+not weak evidence.
+
+**The conditional form**, for whoever reports and cannot wait. State the implication
+and the antecedent separately:
+
+> *If* `uploader.cpp` still assigns `outcome.fullyWritten = ok && write_all(...)`,
+> *then* with `ok` false the battery is sampled and not written, because C++
+> short-circuits `&&` — and *if* the comment above still claims it is written, the
+> comment describes behaviour the code does not have.
+
+The implication is stable and reviewable immediately; the antecedent is one `grep`
+someone runs later. **A finding stated as a fact about a moving tree is worthless the
+moment it is wrong about the tree, even when the reasoning is perfect** — which is
+exactly how three careful readers nearly shipped one each.
+
+This is why "to be checked, not believed" is not hedging. It is the only form in which
+an observation of a moving subject carries its full weight, because the half that can
+be wrong is separated from the half that cannot.
+
+Concretely for this tool: **a mutation run and its survivor diff must happen against a
+tree nobody is editing.** Given the classification-drift finding above, mutmut is
+already sensitive to conditions outside the code; adding an unstable tree to that
+makes the output unfalsifiable rather than merely noisy.
+
 Two things follow. The mistake is not about carelessness with lines of code: it is
 categorising by resemblance, and it operates on strategies and predictions as readily
 as on `grep` patterns. And it is the strongest evidence in this document for the
@@ -448,6 +529,30 @@ same blind spot. And judge the split by what the lists *contain*, not by how muc
 overlap: heavy overlap means the split failed, but disjoint lists are not automatically
 success either — an angle can be disjoint because it was empty. **The test is whether
 each list holds something the other angle had no way to reach.**
+
+**Split by angle, never by file.** In a review where this was tried, the single best
+outcome came from three lines both readers reached from opposite sides — one found "a
+config can be applied after a failed write", the other found "the battery is written
+after a failed write, and that is only safe because TCP stays broken". Same three
+lines, two consequences, and the correct fix came from neither report but from putting
+them together. **A file split would have handed that seam to exactly one reader, and
+the fix would have been whichever half that reader could see.** Adjacent beats
+disjoint.
+
+**And silence from the other angle is not evidence unless they examined the same
+question.** The rule "if the other reader didn't raise it, weight it down" is right only
+when you know they looked. In the same review a fidelity finding was nearly downgraded
+for being solo — but the second reader's silence came from having checked the *battery
+conversion* (which a decision list enumerated) and never asking what else about the
+measurement could differ. That is absence of evidence read as evidence of absence, and
+it would have priced one reader's miss into the other's finding. **The reason they
+missed it made the finding more likely to be real, not less.**
+
+**Also trace before reading each other's notes**, not merely in parallel. The angle
+split protects against duplicated sweeps; it does nothing against *inherited framing*.
+A second reader who starts from the first's write-up has already had the discarded fact
+excluded for them — which is precisely the gap that the second-reader rule cannot close
+(see [the eighth](#the-eighth-is-a-different-failure-and-the-second-reader-does-not-fix-it)).
 
 #### The survivor count is an upper bound on tests needed, not an estimate
 

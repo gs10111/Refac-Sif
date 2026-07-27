@@ -10,6 +10,10 @@
 #include "sleeper.h"
 #include "key_value_store.h"
 #include "access_point.h"
+#include "clock.h"
+#include "trigger_source.h"
+#include "battery_sense.h"
+#include "battery.h"   // lib/power — battery_mv_from_raw
 #include <Preferences.h>
 #include <WebServer.h>
 #include <Update.h>
@@ -75,15 +79,6 @@ public:
     }
 };
 
-// Battery sense on the ADC pin. Same arithmetic as production's
-// map(raw, 0, 4095, 0, 19803) at main.cpp:259-260, which is an integer map with a
-// zero origin, so the multiply-then-divide is equivalent. 4095 * 19803 fits a
-// uint32 with room to spare.
-inline uint16_t esp32_read_battery_mv()
-{
-    uint32_t raw = analogRead(BATTERY_ADC_PIN);
-    return (uint16_t)((raw * BATTERY_MV_MAX) / BATTERY_ADC_MAX);
-}
 
 
 // NVS, namespace "config" — the same location production uses (main.cpp:73), so a
@@ -194,6 +189,31 @@ public:
 
 private:
     WebServer _server;
+};
+
+
+class EspClock : public IClock
+{
+public:
+    uint32_t millis() override { return ::millis(); }
+};
+
+class GpioTriggerSource : public ITriggerSource
+{
+public:
+    // Reads the pin and nothing else. Whether an edge MEANS "stop" is BeltTrigger's
+    // job, and that part is pure.
+    TriggerLevel read() override
+    {
+        return (digitalRead(MAGNET_TRIGGER_PIN) == LOW) ? TRIGGER_LEVEL_LOW
+                                                        : TRIGGER_LEVEL_HIGH;
+    }
+};
+
+class AdcBatterySense : public IBatterySense
+{
+public:
+    uint16_t readMv() override { return battery_mv_from_raw((uint16_t)analogRead(BATTERY_ADC_PIN)); }
 };
 
 #endif // ESP32_PLATFORM_H

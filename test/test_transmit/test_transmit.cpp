@@ -18,6 +18,7 @@
 #include "ring_buffer.h"
 #include "transport.h"
 #include "uploader.h"
+#include "battery_sense.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -30,7 +31,7 @@ class FakeTransport : public ITransport
 public:
     FakeTransport()
         : _openSucceeds(true), _writeLimit(kCaptureMax), _written(0),
-          _responseLen(0), _closed(false), _openCalls(0) {}
+          _responseLen(0), _closed(false), _openCalls(0), _sizeCount(0) {}
 
     bool open(const char *, uint16_t) override
     {
@@ -40,6 +41,14 @@ public:
 
     uint32_t write(const uint8_t *data, uint32_t len) override
     {
+        if (_sizeCount < 16)
+            _sizes[_sizeCount++] = len;
+
+        // A torn-down socket accepts nothing. Modelling this is the point: it is
+        // what turns "a config cannot be applied after a partial upload" from an
+        // assumption about TCP into a property of the code under test.
+        if (_closed)
+            return 0;
         uint32_t room = (_writeLimit > _written) ? (_writeLimit - _written) : 0;
         uint32_t n = (len < room) ? len : room;
         for (uint32_t i = 0; i < n && _written < kCaptureMax; i++)
@@ -49,6 +58,8 @@ public:
 
     uint32_t readExact(uint8_t *out, uint32_t len, uint32_t) override
     {
+        if (_closed)
+            return 0;
         uint32_t n = (len < _responseLen) ? len : _responseLen;
         for (uint32_t i = 0; i < n; i++)
             out[i] = _response[i];
@@ -66,6 +77,16 @@ public:
             _response[i] = bytes[i];
     }
 
+    // A 2-byte write can only be the battery: the header is 4 and payload chunks
+    // are whole ranges capped at 990.
+    bool sawWriteOfSize(uint32_t len) const
+    {
+        for (uint32_t i = 0; i < _sizeCount; i++)
+            if (_sizes[i] == len)
+                return true;
+        return false;
+    }
+
     const uint8_t *captured() const { return _capture; }
     uint32_t capturedLen() const { return _written; }
     bool closed() const { return _closed; }
@@ -80,6 +101,40 @@ private:
     uint32_t _responseLen;
     bool _closed;
     uint32_t _openCalls;
+    uint32_t _sizes[16];
+    uint32_t _sizeCount;
+};
+
+class FixedBattery : public IBatterySense
+{
+public:
+    explicit FixedBattery(uint16_t mv) : _mv(mv) {}
+    uint16_t readMv() override { return _mv; }
+
+private:
+    uint16_t _mv;
+};
+
+// Records how many bytes the transport had accepted at the moment it was read,
+// which pins the sampling POINT rather than the value.
+class RecordingBattery : public IBatterySense
+{
+public:
+    RecordingBattery(const FakeTransport &t, uint16_t mv)
+        : _t(t), _mv(mv), _bytesAtRead(0xFFFFFFFFu) {}
+
+    uint16_t readMv() override
+    {
+        _bytesAtRead = _t.capturedLen();
+        return _mv;
+    }
+
+    uint32_t bytesAcceptedWhenRead() const { return _bytesAtRead; }
+
+private:
+    const FakeTransport &_t;
+    uint16_t _mv;
+    uint32_t _bytesAtRead;
 };
 
 // --- fixture --------------------------------------------------------------
@@ -107,9 +162,10 @@ static void test_transmit_writes_header_then_samples_then_battery(void)
 
     FakeTransport transport;
     transport.scriptResponse(kGoldenConfig, sizeof(kGoldenConfig));
+    FixedBattery battery(0x0BB8);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, 0x0BB8, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
 
     TEST_ASSERT_TRUE(out.opened);
     TEST_ASSERT_TRUE(out.fullyWritten);
@@ -134,9 +190,10 @@ static void test_header_is_total_sample_bytes_little_endian(void)
 
     FakeTransport transport;
     transport.scriptResponse(kGoldenConfig, sizeof(kGoldenConfig));
+    FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    upload_acquisition(transport, "host", 12345, ring, 0, config);
+    upload_acquisition(transport, "host", 12345, ring, battery, config);
 
     const uint32_t payload = 3 * SAMPLE_SIZE_BYTES; // 54
     const uint8_t *w = transport.captured();
@@ -156,9 +213,10 @@ static void test_transmit_sends_oldest_first_when_the_ring_has_wrapped(void)
 
     FakeTransport transport;
     transport.scriptResponse(kGoldenConfig, sizeof(kGoldenConfig));
+    FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, 0, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
     TEST_ASSERT_TRUE(out.fullyWritten);
 
     const uint8_t *w = transport.captured() + HEADER_SIZE_BYTES;
@@ -184,9 +242,10 @@ static void test_config_is_applied_only_when_ten_bytes_arrive(void)
 
     FakeTransport transport;
     transport.scriptResponse(kGoldenConfig, SERVER_CONFIG_WIRE_BYTES - 1); // 9 bytes
+    FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, 0, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
 
     TEST_ASSERT_FALSE(out.configReceived);
     TEST_ASSERT_EQUAL_UINT16(DEFAULT_SLEEP_TIME_MIN, config.sleep_time_min);
@@ -204,9 +263,10 @@ static void test_config_is_applied_when_all_ten_bytes_arrive(void)
 
     FakeTransport transport;
     transport.scriptResponse(kGoldenConfig, SERVER_CONFIG_WIRE_BYTES);
+    FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, 0, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
 
     TEST_ASSERT_TRUE(out.configReceived);
     TEST_ASSERT_EQUAL_UINT16(240, config.sleep_time_min);
@@ -223,9 +283,10 @@ static void test_transmit_reports_failure_on_short_write(void)
     FakeTransport transport;
     transport.truncateWritesAt(HEADER_SIZE_BYTES + SAMPLE_SIZE_BYTES); // dies mid-payload
     transport.scriptResponse(kGoldenConfig, sizeof(kGoldenConfig));
+    FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, 0, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
 
     TEST_ASSERT_TRUE(out.opened);
     TEST_ASSERT_FALSE(out.fullyWritten);
@@ -242,9 +303,10 @@ static void test_ring_is_preserved_when_the_connection_never_opened(void)
 
     FakeTransport transport;
     transport.failOpen();
+    FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, 0, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
 
     TEST_ASSERT_FALSE(out.opened);
     TEST_ASSERT_EQUAL_UINT32(0, transport.capturedLen());
@@ -268,9 +330,10 @@ static void test_ring_is_cleared_once_the_connection_opened_even_if_the_write_fa
     FakeTransport transport;
     transport.truncateWritesAt(HEADER_SIZE_BYTES); // header only, payload rejected
     transport.scriptResponse(kGoldenConfig, sizeof(kGoldenConfig));
+    FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, 0, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
 
     TEST_ASSERT_TRUE(out.opened);
     TEST_ASSERT_FALSE(out.fullyWritten);
@@ -288,9 +351,10 @@ static void test_missing_response_leaves_the_config_but_not_the_data(void)
 
     FakeTransport transport;
     transport.scriptResponse(kGoldenConfig, 0); // silence
+    FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, 0, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
 
     TEST_ASSERT_TRUE(out.fullyWritten);
     TEST_ASSERT_FALSE(out.configReceived);
@@ -299,9 +363,98 @@ static void test_missing_response_leaves_the_config_but_not_the_data(void)
     TEST_ASSERT_TRUE(transport.closed());
 }
 
+// T47d — a partial upload must not apply a config, and must not arm OTA.
+//
+// Production cannot reach this state: main.cpp:248-251 calls client.stop() BEFORE
+// breaking out of the send loop, so the socket is down, available() is false, the
+// 2 s wait expires and it logs "Nenhuma resposta recebida". No config is ever
+// applied after a failed send.
+//
+// Ours continued past a failed write and still read, parsed and applied. The
+// dangerous half is not sleep_min: it is that update=1 in that response would arm
+// OTA off an upload that did not complete — an arming spent on a device whose
+// transmission just failed, which is the exact state the ordering work exists to
+// protect.
+static void test_a_partial_upload_does_not_apply_a_config(void)
+{
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    fill_ring(ring, 1, 4);
+
+    FakeTransport transport;
+    transport.truncateWritesAt(HEADER_SIZE_BYTES + SAMPLE_SIZE_BYTES); // dies mid-payload
+    transport.scriptResponse(kGoldenConfig, sizeof(kGoldenConfig));    // a perfect reply
+    FixedBattery battery(0);
+    ServerConfig config = default_server_config();
+
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+
+    TEST_ASSERT_TRUE(out.opened);
+    TEST_ASSERT_FALSE(out.fullyWritten);
+    TEST_ASSERT_FALSE(out.configReceived);
+
+    TEST_ASSERT_EQUAL_UINT16(DEFAULT_SLEEP_TIME_MIN, config.sleep_time_min);
+    TEST_ASSERT_EQUAL_UINT16(DEFAULT_UPDATE, config.update);
+
+    // The socket was torn down the moment the payload write was refused, as
+    // production does at main.cpp:250 before its break.
+    TEST_ASSERT_TRUE(transport.closed());
+
+    // And the battery write is not even attempted. Production DOES reach
+    // client.write(battery) at :261 — on the socket it just stopped, where it fails
+    // silently — so skipping it is a deliberate deviation. It changes nothing on the
+    // wire, because both versions put zero battery bytes on a dead connection; what
+    // it buys is that the config-after-partial path no longer depends on the
+    // transport behaving the way TCP does.
+    TEST_ASSERT_FALSE(transport.sawWriteOfSize(BATTERY_SIZE_BYTES));
+    TEST_ASSERT_EQUAL_UINT32(HEADER_SIZE_BYTES + SAMPLE_SIZE_BYTES, transport.capturedLen());
+
+    // The ring is still cleared — that part IS production (main.cpp:264-265 sits
+    // after the send loop and a break reaches it).
+    TEST_ASSERT_EQUAL_UINT32(0, ring.bytesStored());
+    TEST_ASSERT_TRUE(transport.closed());
+}
+
+// A27b — the battery is sampled AFTER the whole payload and BEFORE its own write.
+//
+// Production reads the ADC at main.cpp:259, once the send loop has closed: radio
+// hot, cell under sustained transmit load. Sag under load is how a tired cell
+// announces itself, so the loaded value is the diagnostic one — and every
+// battery_mv in the historical corpus was measured that way. Sampling it while the
+// radio is idle reports the good news, under the same column name, and any
+// threshold spanning the change compares two different measurements.
+//
+// DO NOT REMOVE. This is the ONLY test in the suite that pins the sampling point.
+// Every other battery assertion checks the VALUE that lands on the wire, and that
+// value is byte-identical whether the ADC is read before the upload or after it —
+// so deleting this test leaves the whole suite green while the measurement silently
+// changes meaning, under the same column name as the historical corpus. The single
+// catcher is a property of the mutation, not a thinness in the coverage.
+//
+// A future reader will be tempted to hoist this read for tidiness. That is what
+// this test exists to stop, and it pins the POINT rather than the value: the number
+// of bytes the transport had accepted at the moment of the read.
+static void test_battery_is_sampled_after_the_payload_and_before_its_own_write(void)
+{
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    fill_ring(ring, 1, 3);
+
+    FakeTransport transport;
+    transport.scriptResponse(kGoldenConfig, sizeof(kGoldenConfig));
+    RecordingBattery battery(transport, 0x0BB8);
+    ServerConfig config = default_server_config();
+
+    upload_acquisition(transport, "host", 12345, ring, battery, config);
+
+    // Header and all three frames accepted; the battery's own two bytes not yet.
+    TEST_ASSERT_EQUAL_UINT32(HEADER_SIZE_BYTES + 3 * SAMPLE_SIZE_BYTES,
+                             battery.bytesAcceptedWhenRead());
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_battery_is_sampled_after_the_payload_and_before_its_own_write);
+    RUN_TEST(test_a_partial_upload_does_not_apply_a_config);
     RUN_TEST(test_transmit_writes_header_then_samples_then_battery);
     RUN_TEST(test_header_is_total_sample_bytes_little_endian);
     RUN_TEST(test_transmit_sends_oldest_first_when_the_ring_has_wrapped);

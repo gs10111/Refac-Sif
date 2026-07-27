@@ -44,10 +44,23 @@ void App::begin()
     }
     else if (ota == OTA_BRINGUP_FAILED)
     {
-        // The flag is still set, so the next boot tries again. Tear the half-built
-        // AP down and carry on with an ordinary cycle; if this device reaches the
-        // server, update=0 will disarm it and the request ends visibly rather than
-        // latching until some future wake.
+        // The flag is still set. What happens next, in order, because two clauses
+        // side by side were read as alternatives:
+        //
+        //   1. This boot carries on with an ordinary cycle. It does NOT transmit:
+        //      ESP.restart() reloaded .rtc.data, so `stage` is back at ARM_TRIGGER
+        //      and run() deep-sleeps waiting for the magnet.
+        //   2. The next magnet wake retries the bring-up — the flag survived and
+        //      begin() reads it again.
+        //   3. Only if THAT fails does the cycle proceed to a transmission, whose
+        //      update=0 disarms the flag. The request then ends visibly instead of
+        //      latching until some future wake when an unattended AP appears.
+        //
+        // Step 1 depends on RTC_DATA_ATTR being reloaded on a software reset. That
+        // is documented behaviour, not something anyone here has observed, and it is
+        // on the HIL list. If it turns out RTC memory survives ESP.restart(), step 1
+        // is wrong: `stage` would still be CYCLE, this boot would transmit, and the
+        // retry at step 2 would never happen.
         Serial.println("OTA: falha ao subir o AP, tentando no proximo boot");
         _ap.stop();
     }
@@ -69,6 +82,8 @@ void App::begin()
                                             SAMPLE_SIZE_BYTES));
     _acq = new AcquisitionService(_imu, *_ring);
     _acq->setConfig(serverConfig);
+    _cycle = new CycleRunner(*_acq, _trigger, *_ring, _power, _wifi, _tcp,
+                             _store, _pin, _battery, _clock);
 
     _imu.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN);
     _imu.wake(); // once per boot, as main.cpp:114 does — not per acquisition
@@ -106,8 +121,18 @@ void App::run()
         break;
 
     case BELT_ACTION_RUN_CYCLE_ITERATION:
-        runCycleIteration();
+    {
+        NetworkConfig network;
+        network.ssid = WIFI_SSID;
+        network.password = WIFI_PASSWORD;
+        network.host = SERVER_HOST;
+        network.port = TCP_SERVER_PORT;
+
+        const CycleOutcome outcome = _cycle->runIteration(network, serverConfig);
+        _idleTimedOut = outcome.idleTimedOut;
+        _updateRequested = outcome.updateRequested;
         break;
+    }
 
     case BELT_ACTION_SLEEP_TIMER:
         _acq->endCycle();
@@ -136,64 +161,6 @@ void App::run()
         ESP.restart();
         break;
     }
-}
-
-void App::runCycleIteration()
-{
-    _acq->beginAcquisition(millis());
-
-    AcquisitionResult result;
-    do
-    {
-        TriggerLevel level = (digitalRead(MAGNET_TRIGGER_PIN) == LOW)
-                                 ? TRIGGER_LEVEL_LOW
-                                 : TRIGGER_LEVEL_HIGH;
-        uint32_t now = millis();
-        result = _acq->step(now, _trigger.poll(level, now));
-    } while (result == ACQ_RUNNING);
-
-    if (result == ACQ_STOPPED_BY_IDLE)
-    {
-        // The belt stopped. Production discards this acquisition unsent —
-        // main.cpp:169 checks the flag before the transmit block and sleeps out of
-        // loop() at :174 — and the ring is deliberately left alone, so whatever it
-        // holds still goes out on the next successful send.
-        _idleTimedOut = true;
-        return;
-    }
-
-    _power.enterTransmitMode();
-    if (_wifi.connect(WIFI_SSID, WIFI_PASSWORD))
-    {
-        // Starts from the config in force, so a truncated or missing response
-        // leaves every field exactly as it was.
-        ServerConfig newConfig = serverConfig;
-
-        UploadOutcome upload = upload_acquisition(_tcp, SERVER_HOST, TCP_SERVER_PORT,
-                                                  *_ring, esp32_read_battery_mv(),
-                                                  newConfig);
-
-        if (upload.configReceived)
-        {
-            serverConfig = newConfig;
-            _acq->setConfig(serverConfig);
-            _trigger.setCooldownSec(serverConfig.trigger_cooldown_sec);
-            // Clause 1: update=1 arms and asks for a restart, update=0 DISARMS a
-            // flag left set by a failed bring-up. It is not silence, as it is in
-            // the original (main.cpp:282 has no else). Read before write, so a
-            // steady stream of zeroes costs no flash.
-            _updateRequested = apply_update_field(_store, newConfig.update);
-        }
-    }
-
-    // Unconditional, outside every branch — the radio goes off whether the connect
-    // succeeded, failed or was never attempted. Production does the same at
-    // main.cpp:300-301. The refactor turned it off only inside the success branch,
-    // which is R7.
-    //
-    // NOTE: that this line is reached on every path is STRUCTURAL, not tested — the
-    // cycle lives in Arduino code a host build cannot reach. Round 9 extracts it.
-    _power.enterAcquisitionMode();
 }
 
 void App::runOtaWindow()

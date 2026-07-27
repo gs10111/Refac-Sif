@@ -157,32 +157,53 @@ static void test_bytes_stored_never_exceeds_capacity(void)
     TEST_ASSERT_EQUAL_UINT32(rb.bytesStored(), rb.plan().totalBytes());
 }
 
-// A22 — the payload stays a whole number of frames across every wrap.
+// A22 (replaced) — the capacity never claims more bytes than the allocation holds.
 //
-// This is R13 stated as an invariant rather than as an arithmetic fact. The ring is
-// addressed in FRAMES, so no sequence of appends can leave a partial one — and the
-// server slices the payload on a fixed 18-byte stride, so a buffer that ever held
-// 699984 + 16 bytes would decode garbage from that point on and keep decoding
-// garbage for the rest of the file.
-static void test_bytes_stored_stays_a_whole_number_of_frames_across_a_wrap(void)
+// The first version of this test asserted that bytesStored() and plan().totalBytes()
+// are multiples of 18 across a wrap. It could not fail: every length in RingBuffer
+// is a frame count multiplied by the frame size, so the property is true by
+// construction for any value of any counter. It was a test restating the
+// representation back to itself.
+//
+// R13 itself — a byte modulus of 700000 over 18-byte samples — has no local
+// expression left, because the frame-addressed design deleted the byte modulus. When
+// a fix is structural the defect stops having a mutation, and the useful question
+// becomes what the NEW representation can get wrong.
+//
+// This is the answer: rounding the capacity up instead of down. 38889 frames span
+// 700002 bytes over a 700000-byte allocation — two bytes past the end, on every
+// wrap. Worse than R13 was, and silent.
+//
+// The sizes matter. 72 divides evenly and both versions agree on it, so a test built
+// only on evenly-dividing sizes would have been another unfalsifiable assertion.
+static void test_frame_capacity_never_spans_more_bytes_than_it_was_given(void)
 {
-    RingBuffer rb(storage, kFrames, kFrameSize);
-
-    uint8_t frame[kFrameSize];
-    for (uint32_t i = 0; i < 4 * kFrames + 3; i++)
+    struct Case
     {
-        make_frame(frame, (uint8_t)(i & 0xFF));
-        rb.append(frame);
+        uint32_t bytes;
+        uint32_t frames;
+    };
 
-        TEST_ASSERT_EQUAL_UINT32(0, rb.bytesStored() % kFrameSize);
-        TEST_ASSERT_EQUAL_UINT32(0, rb.plan().totalBytes() % kFrameSize);
+    static const Case cases[] = {
+        {(uint32_t)ACQUISITION_BUFFER_BYTES, 38888}, // the real one: 699984 of 700000
+        {71, 3},                                     // 54 fits, 72 would not
+        {72, 4},                                     // divides evenly; both agree
+        {17, 0},                                     // not even one frame
+    };
+
+    for (uint32_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++)
+    {
+        const uint32_t frames = RingBuffer::frameCapacityFor(cases[i].bytes, kFrameSize);
+
+        TEST_ASSERT_EQUAL_UINT32(cases[i].frames, frames);
+        TEST_ASSERT_TRUE(frames * kFrameSize <= cases[i].bytes);
     }
 }
 
 static int run_all(void)
 {
     UNITY_BEGIN();
-    RUN_TEST(test_bytes_stored_stays_a_whole_number_of_frames_across_a_wrap);
+    RUN_TEST(test_frame_capacity_never_spans_more_bytes_than_it_was_given);
     RUN_TEST(test_ring_capacity_is_whole_number_of_frames);
     RUN_TEST(test_append_advances_head_by_one_frame);
     RUN_TEST(test_plan_is_one_range_from_zero_when_not_wrapped);

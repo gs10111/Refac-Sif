@@ -8,6 +8,7 @@
 #include "belt_cycle.h"
 #include "uploader.h"
 #include "ota_arming.h"
+#include "cycle_runner.h"
 #include "belt_trigger.h"
 #include "ring_buffer.h"
 #include "../services/esp32_platform.h"
@@ -21,7 +22,6 @@ public:
     void run();
 
 private:
-    void runCycleIteration();
     void runOtaWindow();
 
     SPIClass            _spi{HSPI};
@@ -40,6 +40,12 @@ private:
     TcpClient           _tcp;
     NvsStore            _store;
     EspAccessPoint      _ap;
+    EspClock            _clock;
+    GpioTriggerSource   _pin;
+    AdcBatterySense     _battery;
+
+    // Built in begin(), once the ring and the acquisition service exist.
+    CycleRunner        *_cycle = nullptr;
 
     // Plain RAM, and that is correct: they describe the cycle currently in
     // progress, and a cycle never spans a reset. D1 keeps the device awake between

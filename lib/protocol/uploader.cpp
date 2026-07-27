@@ -29,7 +29,7 @@ UploadOutcome upload_acquisition(ITransport &transport,
                                  const char *host,
                                  uint16_t port,
                                  RingBuffer &ring,
-                                 uint16_t batteryMv,
+                                 IBatterySense &battery,
                                  ServerConfig &configOut)
 {
     UploadOutcome outcome = {false, false, false};
@@ -38,6 +38,27 @@ UploadOutcome upload_acquisition(ITransport &transport,
         return outcome; // never connected — the ring keeps its data for next time
 
     outcome.opened = true;
+
+#ifdef MUTANT_BATTERY_READ_BEFORE_UPLOAD
+    // ==== MUTATION: MUTANT_BATTERY_READ_BEFORE_UPLOAD ====
+    // Built only by [env:mutant_battery_read_before_upload].
+    // Never by env:native or env:pico32.
+    // Run it:  pio test -e mutant_battery_read_before_upload
+    //
+    // BREAKS: the ADC is sampled before a single byte goes out, with the radio
+    //         connected but idle, instead of after the whole payload as production
+    //         does at main.cpp:259.
+    // WHY:    the conversion is untouched and the column keeps its name, so nothing
+    //         about the CSV looks wrong. An unloaded cell simply reads healthier
+    //         than a loaded one, and sag under load is the whole diagnostic. Every
+    //         historical battery_mv was measured under load; these would not be, and
+    //         any threshold spanning the change compares two different measurements.
+    // CAUGHT BY: test_transmit test_battery_is_sampled_after_the_payload_and_before_
+    //         its_own_write, which pins the byte count at the moment of the read.
+    // SURVIVED BY: every other test — they assert the VALUE that lands on the wire,
+    //         which is identical either way.
+    const uint16_t batteryMv = battery.readMv();
+#endif
 
     ReadPlan plan = ring.plan();
     const uint32_t total = plan.totalBytes();
@@ -75,17 +96,51 @@ UploadOutcome upload_acquisition(ITransport &transport,
         ok = write_all(transport, plan.second.ptr, plan.second.len);
 #endif
 
-    uint8_t battery[BATTERY_SIZE_BYTES];
-    battery[0] = (uint8_t)(batteryMv & 0xFF);
-    battery[1] = (uint8_t)((batteryMv >> 8) & 0xFF);
+    if (!ok)
+    {
+        // Production tears the socket down BEFORE breaking out of the send loop
+        // (main.cpp:250, then :251). That single call is why it cannot apply a
+        // config after a failed send: the battery write at :261 and the response
+        // wait at :273 both reach a dead client and fail silently.
+        //
+        // What follows, precisely, because the obvious description of it is wrong:
+        //
+        //   the battery IS still sampled below, as production samples it at :259;
+        //   the battery is NOT written, because `ok &&` short-circuits at :124 —
+        //     production DOES reach client.write(battery) at :261, so this is a
+        //     deliberate guard on top of the teardown and a real deviation;
+        //   the ring IS still cleared, as production clears it at :264-265.
+        //
+        // The deviation puts nothing different on the wire: production's write lands
+        // on the socket it stopped a moment earlier and fails silently, so both
+        // versions send zero battery bytes after a refused payload. What the guard
+        // buys is that the config-after-partial path is now unreachable TWICE — once
+        // by the teardown, once by the short-circuit — instead of resting on the
+        // transport behaving the way TCP does.
+        transport.close();
+    }
 
-    const bool batteryWritten = write_all(transport, battery, BATTERY_SIZE_BYTES);
-    outcome.fullyWritten = ok && batteryWritten;
+
+    uint8_t batteryBytes[BATTERY_SIZE_BYTES];
+#ifndef MUTANT_BATTERY_READ_BEFORE_UPLOAD
+    // main.cpp:259 — after the send loop has closed, radio hot, cell under load.
+    const uint16_t batteryMv = battery.readMv();
+#endif
+    batteryBytes[0] = (uint8_t)(batteryMv & 0xFF);
+    batteryBytes[1] = (uint8_t)((batteryMv >> 8) & 0xFF);
+
+    outcome.fullyWritten = ok && write_all(transport, batteryBytes, BATTERY_SIZE_BYTES);
 
     // Unconditional, and that is production: the reset at main.cpp:264-265 sits
     // after the send loop, so a write that broke out at :248 still reaches it. A
     // partial send loses its data.
     ring.reset();
+
+    if (!outcome.fullyWritten)
+    {
+        transport.close();
+        return outcome;
+    }
 
     uint8_t response[SERVER_CONFIG_WIRE_BYTES] = {0};
     const uint32_t received =
