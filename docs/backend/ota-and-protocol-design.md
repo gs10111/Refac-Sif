@@ -411,8 +411,31 @@ Total estimado: **16 atuais + ~38 novos**.
 
 ## 6. Perguntas ao lead antes de escrever código
 
+> **Resolvidas na rodada 2 (ver §7):** Q1 → DEC-3 (reverter para o header original),
+> Q2 → DEC-4 (OTA + B1,B2,B3,B4,B8 + B6,B7,B9 na mesma rodada),
+> Q3 → DEC-5 (rota `POST /ota` separada), Q4 → DEC-6 (device-id fica para a fase 2),
+> Q5 → DEC-7 (o lead roda os comandos).
+
 - **Q1 — nomes das colunas do CSV (B5).** Volto para os nomes originais (`x_data`, `x_gyro`, ..., `battery_voltage`), que é o que `backend/tools/analysis/cliente_local_csv.py:107-110` e todo o corpus histórico usam, ou mantenho `accel_x/gyro_x/battery_mv` e **eu** atualizo o script de análise? Decisão de produto — não decido sozinho.
 - **Q2 — escopo desta rodada.** Faço só o OTA (itens 1–3, 5 acima) ou já entram as correções de robustez B1–B4/B8 no mesmo lote? B1 é acionado deterministicamente pelo wrap do buffer de 700000 B (D2), então na minha leitura ele **precisa** entrar junto.
 - **Q3 — desarmar OTA junto com SALVAR.** O checkbox está no mesmo formulário da config: salvar a config com a caixa desmarcada **desarma** o OTA. Aceito, ou você prefere um botão/rota separada (`POST /ota`) para armar/desarmar sem tocar nos 4 parâmetros?
 - **Q4 — identidade do device (§3.3).** Confirmo que MAC/device-id no uplink fica **fora** desta rodada? É mudança de contrato de fio e teria de ser espelhada em C.
 - **Q5 — pytest.** Não consigo rodar a suíte (shell read-only, venv em `backend/.venv`). Preciso que você rode `cd backend && ./.venv/bin/python -m pytest tests/ -q` a cada etapa e me devolva a saída. Confirma?
+
+---
+
+## 7. Limitações conhecidas — registradas, não corrigidas nesta rodada
+
+### L1 — O timeout do socket é por `recv`, não acumulado na conexão
+
+`conn.settimeout(CLIENT_TIMEOUT_SEC)` (`backend/server/tcp_server.py:88`) arma um timeout de 6 s **por chamada de `recv`**. Com `recv_exact` em laço, um peer que entrega 1 byte a cada 5,9 s **nunca** estoura o timeout e segura um worker do pool pelo tempo que quiser. Dez peers assim esgotam `max_workers=10` e o servidor para de processar conexões novas.
+
+O que **não** é: não é o B3. `recv_exact` garante progresso — leitura de comprimento zero levanta `ConnectionError` na hora, então não existe mais o laço que gira a 100 % de CPU sem receber nada. L1 exige um device hostil ou gravemente defeituoso na LAN da planta, entregando bytes de verdade, devagar.
+
+Por que fica de fora agora: **o servidor de produção tem exatamente a mesma exposição** (`pyFiles/win_server.py:60` + laço de `recv`), então corrigir isso é mudança de comportamento nova, não correção de regressão — DEC-0 manda deixar quieto. Perfil de risco diferente do conserto de framing e não deve pegar carona nele.
+
+Mitigações possíveis quando for a hora (uma OU outra, não as duas):
+- **Deadline acumulado por conexão**: marca `t0` no `accept`, e cada `recv_exact` recalcula `conn.settimeout(deadline - now)`, abortando quando o orçamento total acaba. Simples, mas precisa de um orçamento generoso o bastante para o pior caso real de 699984 B em WiFi de planta.
+- **Piso de throughput**: mede bytes/s ao longo da conexão e derruba abaixo de um mínimo. Mais tolerante a uma transferência legitimamente lenta, mais código e mais um número para calibrar.
+
+Preferência, se/quando entrar: deadline acumulado, dimensionado a partir do throughput medido em campo pelo firmware (o original já imprime kbps ao fim de cada transmissão), com folga larga.

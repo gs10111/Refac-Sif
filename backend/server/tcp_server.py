@@ -9,8 +9,9 @@ Protocol (per connection):
     [2 bytes] uint16 little-endian  — battery voltage in mV
 
   server → ESP32:
-    [8 bytes] ServerConfig          — 4 × uint16 little-endian
-                                      (sleep_min, idle_min, max_acq, cooldown_sec)
+    [10 bytes] ServerConfig         — 5 × uint16 little-endian
+                                      (sleep_min, idle_min, max_acq,
+                                       cooldown_sec, update)
 
 Threads (started from __main__):
   server_main      — accepts TCP connections, dispatches handle_client via thread pool
@@ -35,7 +36,7 @@ from protocol.packet import (
 )
 from config.settings import (
     SERVER_IP, SERVER_PORT, BUFFER_SIZE, GDRIVE_PATH,
-    CLIENT_TIMEOUT_SEC,
+    CLIENT_TIMEOUT_SEC, MAX_PAYLOAD_BYTES, BATTERY_INVALID,
 )
 from app_state import AppState, ConnectionEntry
 
@@ -117,56 +118,55 @@ def handle_client(conn, addr, state: AppState):
     """
     logging.info(f"Connected: {addr[0]}:{addr[1]}")
     conn.settimeout(CLIENT_TIMEOUT_SEC)
-    buf     = b''
     samples = []
 
     try:
-        # First 4 bytes: total number of sample bytes the device will send
-        header = conn.recv(HEADER_SIZE_BYTES)
-        expected = int.from_bytes(header, byteorder='little')
-        received = 0
+        # First 4 bytes: total number of sample bytes the device will send.
+        # The header alone decides where the payload ends — counting bytes as
+        # they arrive is what used to let the battery count as sample data.
+        expected = int.from_bytes(recv_exact(conn, HEADER_SIZE_BYTES), byteorder='little')
+        if expected > MAX_PAYLOAD_BYTES:
+            raise ValueError(f"refusing {expected}-byte payload from {addr[0]}")
 
-        while running:
-            data = conn.recv(BUFFER_SIZE)
-            if not data:
-                break
-            buf      += data
-            received += len(data)
+        payload = recv_exact(conn, expected)
 
-            # Parse complete 18-byte frames as they arrive
-            while len(buf) >= SAMPLE_SIZE_BYTES:
-                samples.append(parse_sample(buf[:SAMPLE_SIZE_BYTES]))
-                buf = buf[SAMPLE_SIZE_BYTES:]
+        # A trailing partial frame is not a sample. Our firmware never sends one
+        # (its ring buffer holds whole frames); an older build with a ring size
+        # that is not a multiple of SAMPLE_SIZE_BYTES does.
+        for i in range(expected // SAMPLE_SIZE_BYTES):
+            start = i * SAMPLE_SIZE_BYTES
+            samples.append(parse_sample(payload[start:start + SAMPLE_SIZE_BYTES]))
 
-            if received >= expected:
-                # All sample data received — read 2-byte battery voltage
-                while len(buf) < BATTERY_SIZE_BYTES:
-                    buf += conn.recv(BATTERY_SIZE_BYTES - len(buf))
-                battery_mv = int.from_bytes(buf[:BATTERY_SIZE_BYTES], byteorder='little')
-                buf = buf[BATTERY_SIZE_BYTES:]
+        # Battery is the last thing on the wire. Losing it must not cost the
+        # device its config — same degradation as the production server.
+        try:
+            battery_mv = int.from_bytes(
+                recv_exact(conn, BATTERY_SIZE_BYTES), byteorder='little')
+        except (ConnectionError, socket.timeout):
+            battery_mv = BATTERY_INVALID
+            logging.warning(f"Battery reading not received from {addr[0]}")
 
-                # Append battery reading to every sample row
-                for s in samples:
-                    s.append(battery_mv)
+        # Append battery reading to every sample row
+        for s in samples:
+            s.append(battery_mv)
 
-                # Send current config to the device (read atomically under lock)
-                with state.lock:
-                    response = pack_server_config(
-                        state.config.sleep_min, state.config.idle_min,
-                        state.config.max_acq,   state.config.cooldown_sec
-                    )
-                conn.sendall(response)
-                logging.info(f"Config sent to {addr[0]}")
+        # Send current config to the device (read atomically under lock)
+        with state.lock:
+            response = pack_server_config(
+                state.config.sleep_min, state.config.idle_min,
+                state.config.max_acq,   state.config.cooldown_sec, 0
+            )
+        conn.sendall(response)
+        logging.info(f"Config sent to {addr[0]}")
 
-                # Record this connection in the web UI history
-                with state.lock:
-                    state.connections.append(ConnectionEntry(
-                        ip=addr[0],
-                        timestamp=datetime.datetime.now(),
-                        n_samples=len(samples),
-                        battery_mv=battery_mv,
-                    ))
-                break
+        # Record this connection in the web UI history
+        with state.lock:
+            state.connections.append(ConnectionEntry(
+                ip=addr[0],
+                timestamp=datetime.datetime.now(),
+                n_samples=len(samples),
+                battery_mv=battery_mv,
+            ))
 
     except socket.timeout:
         logging.warning(f"Timeout from {addr[0]}")
