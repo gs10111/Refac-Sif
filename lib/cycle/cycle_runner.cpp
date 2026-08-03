@@ -2,6 +2,7 @@
 
 #include "uploader.h"
 #include "ota_arming.h"
+#include "log.h"
 
 #define WIFI_CONNECT_TIMEOUT_MS 5000 // main.cpp:191 waits 5 s
 
@@ -24,6 +25,9 @@ CycleOutcome CycleRunner::runIteration(const NetworkConfig &network, ServerConfi
 {
     CycleOutcome outcome = {false, false};
 
+    SIF_LOG("Coletando dados"); // main.cpp:166, verbatim
+    SIF_TIMER(acquisitionStart);
+
     _acq.beginAcquisition(_clock.millis());
 
     AcquisitionResult result;
@@ -32,6 +36,8 @@ CycleOutcome CycleRunner::runIteration(const NetworkConfig &network, ServerConfi
         const uint32_t now = _clock.millis();
         result = _acq.step(now, _trigger.poll(_pin.read(), now));
     } while (result == ACQ_RUNNING);
+
+    SIF_LOG(SIF_ELAPSED(acquisitionStart)); // main.cpp:180, elapsed ms
 
     if (result == ACQ_STOPPED_BY_IDLE)
     {

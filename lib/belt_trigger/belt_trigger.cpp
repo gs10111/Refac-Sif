@@ -1,4 +1,5 @@
 #include "belt_trigger.h"
+#include "log.h"
 
 BeltTrigger::BeltTrigger()
     : _lastLevel(TRIGGER_LEVEL_HIGH),
@@ -71,9 +72,13 @@ TriggerEvent BeltTrigger::poll(TriggerLevel raw, uint32_t nowMs)
 
     // Magnet arrives: end the acquisition. One belt revolution, one acquisition.
     if (raw == TRIGGER_LEVEL_LOW)
+    {
+        SIF_LOG("Button Pressed!"); // main.cpp:329, verbatim
         return TRIGGER_EVENT_STOP;
+    }
 
     // Magnet leaves: that is what arms the cooldown (main.cpp:334-337).
+    SIF_LOG("Button Released!"); // main.cpp:335, verbatim
     _openAtMs = nowMs + (uint32_t)_cooldownSec * 1000UL;
     return TRIGGER_EVENT_RELEASED;
 #endif

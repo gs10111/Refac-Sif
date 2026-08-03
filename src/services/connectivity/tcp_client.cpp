@@ -3,7 +3,16 @@
 
 bool TcpClient::open(const char *host, uint16_t port)
 {
-    return _client.connect(host, port);
+    Serial.println("Conectando ao servidor TCP..."); // main.cpp:206
+
+    if (!_client.connect(host, port))
+    {
+        Serial.println("Falha na conexão ao servidor."); // main.cpp:213
+        return false;
+    }
+
+    Serial.println("Conectado ao servidor."); // main.cpp:209
+    return true;
 }
 
 uint32_t TcpClient::write(const uint8_t *data, uint32_t len)

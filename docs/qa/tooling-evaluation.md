@@ -478,6 +478,43 @@ It also generalises past greps to every measurement in this document — the cla
 drift, the moving tree, the declaration count read as an outcome. In each case the
 technical fix helped and the reporting discipline is what held.
 
+#### A pre-flight for an irreversible action asks a delta, not a classification
+
+Before publishing a branch to a public repository, the pre-flight checked *what is a
+secret* — `git ls-files` on the ignored secrets file, `git log -S` on the SSID and
+password. Those passed and they are structurally blind to an **identifier**: a customer's
+Google account and a Drive folder ID, which are not secret and are simply not ours to
+publish. The check answered the question it was built for while the question had
+narrowed.
+
+The counter-question — *what becomes public* — caught it. But that question was then
+asserted as urgency (*"cheap now, expensive in five minutes"*) without establishing the
+other half of the delta, and the other half falsified it: both values had been in the
+public default branch since the repository's first commit, two months earlier. **The
+finding was real; the urgency was not.** The push changed no exposure that `main` did not
+already carry.
+
+Both errors are the same error from opposite ends:
+
+| Question asked | Missing |
+|---|---|
+| *Is it secret?* | no delta at all — classification cannot see "not secret, but not ours" |
+| *Is it about to become public?* | one side of the delta — never checked whether it already was |
+
+> **An exposure question is a delta and needs both sides: what is in the thing being
+> published, and what is already out there.**
+
+And the second error is the one I had the remedy for and did not apply: I could not run
+`git`, so the honest form was the conditional — *if these values are not already in
+`main`, the push is the exposure event* — which separates the reasoning from the tree
+state I had no instrument to observe. Stated as a fact, it was wrong the moment the tree
+state disagreed, exactly as [the conditional-form rule](#a-third-class-measuring-a-moving-target)
+says. Say only what your instruments can reach.
+
+The finding survives its bad framing: the identifier is in a public repository, and if
+that Drive folder is link-shared, the ID is the access path to every plant CSV the system
+copies there. That is a question about the repository, not about any branch.
+
 #### A threshold derived from the data must exclude what it exists to detect
 
 From the CSV gap check (S1): the tool compares each timestamp delta against a **median**
