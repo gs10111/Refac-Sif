@@ -31,7 +31,7 @@ RingBuffer make_sample_ring(IAllocator &allocator,
 #else
     if (storage == nullptr)
     {
-        fault.fatal("Falha ao alocar memoria na PSRAM para o buffer de aquisicao");
+        fault.fatal("Falha ao alocar memória na PSRAM!"); // main.cpp:61, verbatim
         return RingBuffer(nullptr, 0, frameSize);
     }
 

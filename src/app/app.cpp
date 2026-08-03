@@ -117,6 +117,7 @@ void App::run()
     switch (step.action)
     {
     case BELT_ACTION_SLEEP_UNTIL_TRIGGER:
+        Serial.println("Deep sleep por trigger magnetico"); // main.cpp:148, verbatim
         _power.deepSleepUntilTrigger(MAGNET_TRIGGER_PIN);
         break;
 
@@ -135,11 +136,13 @@ void App::run()
     }
 
     case BELT_ACTION_SLEEP_TIMER:
+        Serial.println("Deep sleep por tempo..."); // main.cpp:140, verbatim
         _acq->endCycle();
         _power.deepSleepTimer(serverConfig.sleep_time_min);
         break;
 
     case BELT_ACTION_RESTART:
+        Serial.println("Atualização solicitada. Reiniciando para modo OTA..."); // main.cpp:286
         // The arming is already persisted — apply_update_field wrote it the moment
         // the response arrived. Restarting here is what enters the OTA boot path,
         // and it MUST happen before another acquisition: the next transmission

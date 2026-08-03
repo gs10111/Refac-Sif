@@ -17,8 +17,14 @@ bool WiFiManager::connect(const char *ssid, const char *password, uint32_t timeo
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED) {
         if ((millis() - start) > timeoutMs) return false;
+        Serial.print("."); // main.cpp:193 — the pontinhos, asked for by name
         delay(100);
     }
+
+    Serial.print("\n");                    // main.cpp:198
+    Serial.println("Conectado ao Wi-Fi.");  // main.cpp:199
+    Serial.println("Tempo de Conexão");     // main.cpp:200
+    Serial.println(millis() - start);       // main.cpp:201
     return true;
 }
 

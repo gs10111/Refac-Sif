@@ -89,7 +89,11 @@ public:
     bool getBool(const char *key, bool defaultValue) override
     {
         Preferences prefs;
-        prefs.begin("config", true);
+        // READ-WRITE, as production opens it at main.cpp:73. Read-only fails on a
+        // namespace that does not exist yet, which is every freshly flashed board,
+        // and the Arduino layer logs `nvs_open failed: NOT_FOUND` on each boot.
+        // Read-write creates it. The value read is identical either way.
+        prefs.begin("config", false);
         const bool value = prefs.getBool(key, defaultValue);
         prefs.end();
         return value;

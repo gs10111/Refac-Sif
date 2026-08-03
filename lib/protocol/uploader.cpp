@@ -1,5 +1,7 @@
 #include "uploader.h"
 
+#include "log.h"
+
 // Production fragments the payload at 990 bytes (main.cpp:15, :237) and aborts the
 // loop when a write is refused (:248-251).
 #define UPLOAD_CHUNK_BYTES 990
@@ -18,7 +20,10 @@ static bool write_all(ITransport &transport, const uint8_t *data, uint32_t len)
 
         uint32_t accepted = transport.write(data + sent, chunk);
         if (accepted == 0)
+        {
+            SIF_LOG("Erro ao enviar dados. Tentando reconectar..."); // main.cpp:249
             return false; // peer stopped taking data
+        }
 
         sent += accepted;
     }
@@ -33,6 +38,7 @@ UploadOutcome upload_acquisition(ITransport &transport,
                                  ServerConfig &configOut)
 {
     UploadOutcome outcome = {false, false, false};
+    SIF_TIMER(uploadStart);
 
     if (!transport.open(host, port))
         return outcome; // never connected — the ring keeps its data for next time
@@ -146,9 +152,38 @@ UploadOutcome upload_acquisition(ITransport &transport,
     const uint32_t received =
         transport.readExact(response, SERVER_CONFIG_WIRE_BYTES, CONFIG_RESPONSE_TIMEOUT_MS);
 
+    // main.cpp:268-270. Production times this from the WiFi begin; ours starts at
+    // the connection open, because the connect happens in WiFiManager. Same shape,
+    // narrower span, and the number is a diagnostic rather than a measurement.
+    SIF_LOG("Tempo de Conexão + Transmissão");
+    SIF_LOG(SIF_ELAPSED(uploadStart));
+#ifdef ARDUINO
+    {
+        const uint32_t ms = SIF_ELAPSED(uploadStart);
+        const float kbps = ms ? ((total + BATTERY_SIZE_BYTES) * 8.0f) / (float)ms : 0.0f;
+        SIF_LOGF("Transmissão concluída com throughput de %.2f kbps\n", kbps);
+    }
+#endif
+
     // Through the decoder, not straight into the struct: a short frame must leave
     // the previous config exactly as it was.
     outcome.configReceived = parse_server_config(response, received, configOut);
+
+    if (outcome.configReceived)
+    {
+        SIF_LOGF("Recebido do servidor: %u, %u, %u, %u, %u\n", // main.cpp:281
+                 configOut.sleep_time_min, configOut.idle_timeout_min,
+                 configOut.max_acquisitions, configOut.trigger_cooldown_sec,
+                 configOut.update);
+    }
+    else if (received > 0)
+    {
+        SIF_LOG("Resposta do servidor incompleta."); // main.cpp:291
+    }
+    else
+    {
+        SIF_LOG("Nenhuma resposta recebida do servidor."); // main.cpp:294
+    }
 
     transport.close();
     return outcome;
