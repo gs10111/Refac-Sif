@@ -40,6 +40,25 @@ HISTORY_MAX_CONNECTIONS = 500
 SAMPLING_HZ   = os.getenv('SIF_SAMPLING_HZ', '').strip() or DEFAULT_SAMPLING_HZ
 SAMPLING_CODE = sampling_code_from_hz(SAMPLING_HZ)
 
+# --- MQTT / ThingsBoard -----------------------------------------------------
+# Publishing is off until asked for: a server that has never been pointed at a
+# broker must not try to reach one. Once asked for, an incomplete configuration
+# raises here, at import — a server that looks configured for ThingsBoard and
+# quietly publishes nowhere is worse than one that refuses to start.
+MQTT_ENABLED = os.getenv('SIF_MQTT_ENABLED', '').strip().lower() in ('1', 'true', 'yes')
+MQTT_HOST    = os.getenv('SIF_MQTT_HOST', '').strip()
+MQTT_PORT    = int(os.getenv('SIF_MQTT_PORT', '1883'))
+# Topic prefix and block size are operational knobs, not credentials: the
+# gateway subscribes to `<prefix>/telemetry/#` and `<prefix>/burst/#`.
+MQTT_TOPIC_PREFIX = os.getenv('SIF_MQTT_TOPIC_PREFIX', 'sif').strip() or 'sif'
+MQTT_CHUNK_SIZE   = int(os.getenv('SIF_MQTT_CHUNK_SIZE', '100'))
+
+if MQTT_ENABLED and not MQTT_HOST:
+    raise ValueError(
+        'SIF_MQTT_ENABLED esta ligado mas SIF_MQTT_HOST esta vazio: '
+        'sem broker nao ha para onde publicar.'
+    )
+
 DEFAULT_SLEEP_MIN      = 240
 DEFAULT_IDLE_MIN       =  20
 DEFAULT_MAX_ACQ        =   5

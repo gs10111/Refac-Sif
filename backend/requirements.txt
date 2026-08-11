@@ -1,3 +1,6 @@
 numpy
 flask>=3.0
 pytest>=8.0
+# Publicação das capturas no broker local. Só é importado quando
+# SIF_MQTT_ENABLED está ligado — ver telemetry/publisher.py.
+paho-mqtt>=2.0
