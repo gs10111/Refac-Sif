@@ -70,9 +70,9 @@ bool is_valid_sampling_code(uint16_t code);
 // never written, corrupt, a rate the part cannot do — reads as 50 Hz.
 uint8_t sampling_code_or_default(uint16_t stored);
 
-// Decode a server response frame. Requires the full 10 bytes; leaves `out`
-// untouched when the frame is short, so a truncated response can never
-// half-reconfigure the duty cycle.
+// Decode a server response frame. Requires the full 12 bytes; leaves `out`
+// untouched when the frame is short, so neither a truncated response nor a
+// legacy 10-byte one can half-reconfigure the duty cycle.
 bool parse_server_config(const uint8_t *bytes, uint32_t len, ServerConfig &out);
 
 // Config used before the first server contact.
