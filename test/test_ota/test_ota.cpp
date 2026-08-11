@@ -114,6 +114,10 @@ private:
     CallLog &_log;
     bool _value;
     uint32_t _writes;
+    // Not exercised here: OTA arming is a bool. Present so the fake still
+    // satisfies the interface the rate field added.
+    uint16_t getUShort(const char *, uint16_t defaultValue) override { return defaultValue; }
+    void putUShort(const char *, uint16_t) override {}
 };
 
 class FakeAccessPoint : public IAccessPoint

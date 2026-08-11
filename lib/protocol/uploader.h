@@ -12,7 +12,7 @@ struct UploadOutcome
 {
     bool opened;          // the connection came up; the ring has been cleared
     bool fullyWritten;    // header, every sample byte and the battery all accepted
-    bool configReceived;  // a full 10-byte response arrived and was applied
+    bool configReceived;  // a full 12-byte response arrived and was applied
 };
 
 // One acquisition, one connection: open, send, clear, read the config, close.

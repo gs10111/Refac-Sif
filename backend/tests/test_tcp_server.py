@@ -73,8 +73,8 @@ def exchange(state, ip='10.0.0.1', n_samples=1):
 
 
 def sent_config(conn):
-    """Unpack the 10-byte ServerConfig the server wrote to the socket."""
-    return struct.unpack('<HHHHH', conn.sendall.call_args[0][0])
+    """Unpack the 12-byte ServerConfig the server wrote to the socket."""
+    return struct.unpack('<HHHHHH', conn.sendall.call_args[0][0])
 
 
 def test_handle_client_sends_config_from_state():
@@ -87,12 +87,23 @@ def test_handle_client_sends_config_from_state():
 
     conn = exchange(state)
 
-    sleep_min, idle_min, max_acq, cooldown_sec, update = sent_config(conn)
+    sleep_min, idle_min, max_acq, cooldown_sec, update, sampling_code = sent_config(conn)
     assert sleep_min    == 99
     assert idle_min     == 11
     assert max_acq      == 4
     assert cooldown_sec == 7
     assert update       == 0
+
+
+def test_handle_client_sends_the_sampling_code_the_fleet_is_configured_with():
+    """The rate reaches the device on the same frame as the duty cycle: a
+    device that answers is a device that just got told which rate to run."""
+    state = AppState()
+    state.config.sampling_code = 7          # 200 Hz
+
+    conn = exchange(state)
+
+    assert sent_config(conn)[5] == 7
 
 
 def test_handle_client_logs_connection_to_state():

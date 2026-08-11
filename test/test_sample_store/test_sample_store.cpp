@@ -95,7 +95,7 @@ static void test_allocation_requests_exactly_the_production_buffer_size(void)
                                        ACQUISITION_BUFFER_BYTES, SAMPLE_SIZE_BYTES);
 
     TEST_ASSERT_EQUAL_UINT32(1, alloc.calls());
-    TEST_ASSERT_EQUAL_UINT32(700000, alloc.requested());
+    TEST_ASSERT_EQUAL_UINT32(1080000, alloc.requested());
     TEST_ASSERT_EQUAL_UINT32(0, fault.calls());
 
     // And the ring is addressed in whole frames, not in the raw byte count.

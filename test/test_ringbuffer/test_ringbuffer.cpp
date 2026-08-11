@@ -55,20 +55,23 @@ static void append_markers(RingBuffer &rb, uint8_t first, uint8_t last)
     }
 }
 
-// T06 — 700000 is not a multiple of 18. The capacity the ring actually uses must
-// be, or every wrap shifts the framing by 16 bytes and the server's fixed 18-byte
-// slicing decodes garbage from that point on.
+// T06 — the capacity the ring uses must be a whole number of frames, or every
+// wrap shifts the framing and the server's fixed 18-byte slicing decodes garbage
+// from that point on. 1080000 divides evenly by 18; the 700000 this replaced did
+// not, and left 16 bytes the ring could never use.
 static void test_ring_capacity_is_whole_number_of_frames(void)
 {
-    TEST_ASSERT_EQUAL_UINT32(700000, (uint32_t)ACQUISITION_BUFFER_BYTES);
+    TEST_ASSERT_EQUAL_UINT32(1080000, (uint32_t)ACQUISITION_BUFFER_BYTES);
 
     const uint32_t frames =
         RingBuffer::frameCapacityFor((uint32_t)ACQUISITION_BUFFER_BYTES, kFrameSize);
 
-    TEST_ASSERT_EQUAL_UINT32(38888, frames);
-    TEST_ASSERT_EQUAL_UINT32(699984, frames * kFrameSize);
+    TEST_ASSERT_EQUAL_UINT32(60000, frames);
+    TEST_ASSERT_EQUAL_UINT32(1080000, frames * kFrameSize);
     TEST_ASSERT_EQUAL_UINT32(0, (frames * kFrameSize) % kFrameSize);
-    TEST_ASSERT_EQUAL_UINT32(16, (uint32_t)ACQUISITION_BUFFER_BYTES - frames * kFrameSize);
+    // Nothing left over: the ring now spans the whole allocation. The 16 bytes
+    // that used to be unreachable were an artefact of 700000, not a design.
+    TEST_ASSERT_EQUAL_UINT32(0, (uint32_t)ACQUISITION_BUFFER_BYTES - frames * kFrameSize);
 }
 
 // T07
@@ -185,7 +188,10 @@ static void test_frame_capacity_never_spans_more_bytes_than_it_was_given(void)
     };
 
     static const Case cases[] = {
-        {(uint32_t)ACQUISITION_BUFFER_BYTES, 38888}, // the real one: 699984 of 700000
+        {(uint32_t)ACQUISITION_BUFFER_BYTES, 60000}, // the real one: 1080000 of 1080000
+        {700000, 38888},                             // the size before the rate
+                                                     // became configurable: 699984
+                                                     // of 700000, 16 bytes unusable
         {71, 3},                                     // 54 fits, 72 would not
         {72, 4},                                     // divides evenly; both agree
         {17, 0},                                     // not even one frame

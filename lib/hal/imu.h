@@ -34,6 +34,11 @@ public:
     virtual void wake() = 0;
     virtual void sleep() = 0;
 
+    // The ODR nibble to use from the next wake() on. Taking effect at wake() and
+    // not immediately is the part's own rule: ACCEL_CONFIG0 and GYRO_CONFIG0 are
+    // written while bringing the sensors out of OFF, which is what wake() does.
+    virtual void setSamplingCode(uint8_t odrNibble) = 0;
+
     // Fills IMU_SENSOR_BYTES bytes. Returns IMU_NOT_READY without touching `out`
     // when DATA_RDY is clear.
     virtual ImuStatus readSensorFrame(uint8_t *out) = 0;

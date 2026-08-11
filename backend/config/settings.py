@@ -1,5 +1,7 @@
 import os
 
+from protocol.packet import DEFAULT_SAMPLING_HZ, sampling_code_from_hz
+
 SERVER_IP   = os.getenv('SERVER_IP',   '0.0.0.0')
 SERVER_PORT = int(os.getenv('SERVER_PORT', '12345'))
 
@@ -30,6 +32,13 @@ BATTERY_INVALID = -1
 # this holds about twenty rounds. What matters is not the number but how many
 # rounds the operator can still see the OTA row for.
 HISTORY_MAX_CONNECTIONS = 500
+
+# Acquisition rate sent to every device, as the ODR nibble the part expects.
+# An empty variable reads as "not set" — `Environment="SIF_SAMPLING_HZ="` in a
+# systemd unit is a typo, not a request for a blank rate. Anything else that is
+# not a supported rate raises here, at import: see the comment on WEB_PORT.
+SAMPLING_HZ   = os.getenv('SIF_SAMPLING_HZ', '').strip() or DEFAULT_SAMPLING_HZ
+SAMPLING_CODE = sampling_code_from_hz(SAMPLING_HZ)
 
 DEFAULT_SLEEP_MIN      = 240
 DEFAULT_IDLE_MIN       =  20

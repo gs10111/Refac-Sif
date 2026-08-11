@@ -106,6 +106,23 @@ public:
         prefs.putBool(key, value);
         prefs.end();
     }
+
+    uint16_t getUShort(const char *key, uint16_t defaultValue) override
+    {
+        Preferences prefs;
+        prefs.begin("config", false);
+        const uint16_t value = prefs.getUShort(key, defaultValue);
+        prefs.end();
+        return value;
+    }
+
+    void putUShort(const char *key, uint16_t value) override
+    {
+        Preferences prefs;
+        prefs.begin("config", false);
+        prefs.putUShort(key, value);
+        prefs.end();
+    }
 };
 
 // SoftAP plus the upload page, matching production's configureOtaServer

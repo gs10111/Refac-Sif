@@ -50,6 +50,7 @@ public:
 
     // IImu
     void wake() override;
+    void setSamplingCode(uint8_t odrNibble) override;
     void sleep() override;
     ImuStatus readSensorFrame(uint8_t *out) override;
 

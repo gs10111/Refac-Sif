@@ -74,6 +74,7 @@ class LoggingImu : public IImu
 public:
     explicit LoggingImu(CallLog &log) : _log(log) {}
     void wake() override { _log.record("imu.wake"); }
+    void setSamplingCode(uint8_t) override {}
     void sleep() override { _log.record("imu.sleep"); }
     ImuStatus readSensorFrame(uint8_t *) override { return IMU_NOT_READY; }
 

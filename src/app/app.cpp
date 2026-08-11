@@ -23,12 +23,19 @@ RTC_DATA_ATTR static BeltStage stage = BELT_INITIAL_STAGE;
 //
 // Within one wake it still carries across acquisitions, because D1 keeps the device
 // awake for the whole cycle and nothing here is reinitialised until a reset.
+//
+// The rate is the exception: it IS persisted, and read back below before the
+// first acquisition. It has to be, because it is the one field that must hold
+// while the device is out of contact — a sensor that wakes, captures and only
+// then hears from the server would otherwise record its whole first burst at a
+// rate the operator changed days ago.
 static ServerConfig serverConfig = {
     DEFAULT_SLEEP_TIME_MIN,
     DEFAULT_IDLE_TIMEOUT_MIN,
     DEFAULT_MAX_ACQUISITIONS,
     DEFAULT_TRIGGER_COOLDOWN_SEC,
-    DEFAULT_UPDATE};
+    DEFAULT_UPDATE,
+    DEFAULT_SAMPLING_CODE};
 
 void App::begin()
 {
@@ -86,6 +93,16 @@ void App::begin()
                              _store, _pin, _battery, _clock);
 
     _imu.begin(SPI_SCK_PIN, SPI_MISO_PIN, SPI_MOSI_PIN);
+
+    // What NVS holds is not trusted: a key never written, or written by a build
+    // that used another table, falls back to the 50 Hz the fleet has always run
+    // rather than reaching ACCEL_CONFIG0 as a Reserved nibble.
+    serverConfig.sampling_code = sampling_code_or_default(
+        _store.getUShort(SAMPLING_CODE_NVS_KEY, DEFAULT_SAMPLING_CODE));
+    _imu.setSamplingCode((uint8_t)serverConfig.sampling_code);
+    Serial.printf("Taxa de amostragem: codigo ODR %u\n",
+                  (unsigned)serverConfig.sampling_code);
+
     _imu.wake(); // once per boot, as main.cpp:114 does — not per acquisition
 
     // Starts the initial cooldown, which is what keeps the magnet that caused the
