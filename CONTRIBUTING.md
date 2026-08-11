@@ -14,7 +14,7 @@
 2. **TDD, com o vermelho observado.** Teste antes da implementação, provando o critério de aceite da
    spec — não algo parecido.
    - Firmware: `~/.platformio/penv/bin/pio test -e native`
-   - Backend: `backend/venv/bin/python -m pytest -q` (145 testes, ~1 s)
+   - Backend: `backend/venv/bin/python -m pytest -q` (150 testes, ~1 s)
    - Prova de que o teste **detecta**, não só passa: `pio test -e mutant_<nome>` — ali a **falha é a
      condição de sucesso** (`platformio.ini`, envs `mutant_*`; racional em `test/README.md`).
    - **Cole o vermelho no PR.** Aqui não existe CI para registrar isso por você (ver "Diferenças").
