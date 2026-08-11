@@ -78,8 +78,8 @@ def test_full_exchange_over_a_real_socket(socket_pair):
     # The response was written before handle_client closed its end, so it is
     # already sitting in this socket's receive queue.
     response = client.recv(SERVER_CONFIG_SIZE)
-    sleep_min, idle_min, max_acq, cooldown_sec, update = struct.unpack(
-        '<HHHHH', response)
+    sleep_min, idle_min, max_acq, cooldown_sec, update, sampling_code = struct.unpack(
+        '<HHHHHH', response)
 
     assert len(response) == SERVER_CONFIG_SIZE
     assert sleep_min     == 111

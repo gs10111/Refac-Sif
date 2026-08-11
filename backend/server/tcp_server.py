@@ -198,7 +198,8 @@ def handle_client(conn, addr, state: AppState):
         config, ota = state.take_config_for_send()
         response = pack_server_config(
             config.sleep_min, config.idle_min,
-            config.max_acq,   config.cooldown_sec, int(ota)
+            config.max_acq,   config.cooldown_sec, int(ota),
+            config.sampling_code,
         )
 
         try:

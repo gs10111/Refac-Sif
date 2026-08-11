@@ -55,26 +55,32 @@
 // =============================================================================
 // Memory
 // =============================================================================
-// Size of the PSRAM acquisition buffer, in BYTES — the same ps_malloc size the
-// production firmware uses.
+// Size of the PSRAM acquisition buffer, in BYTES.
 //
 // The unit in the name is not decoration. The original constant was 350000 and
 // counted int16 WORDS (350000 * 2 = 700000 bytes); reading it as SAMPLES and
 // multiplying by the 18-byte frame asked for 6.3 MB, which no ESP32 can map, so
 // ps_malloc returned null and the first sample stored to address 0.
 //
-// 700000 is not a whole number of 18-byte frames, so the ring uses 38888 frames
-// = 699984 bytes and the trailing 16 bytes are never written. That keeps the
-// payload a whole number of frames and every wrap frame-aligned.
-#define ACQUISITION_BUFFER_BYTES     700000UL
+// The size is derived, not chosen: the highest rate the device can be told to
+// run (200 Hz) for the capture window the plant works with (5 minutes). At the
+// 50 Hz the fleet ran before the rate became configurable, the same buffer
+// holds 20 minutes — strictly more than the 777 s the previous 700000 bytes
+// held, so no capture that fit before stops fitting.
+//
+// Unlike 700000, this size IS a whole number of 18-byte frames, so the ring
+// spans the whole allocation and no trailing bytes go unused.
+#define ACQUISITION_MAX_HZ           200UL
+#define ACQUISITION_WINDOW_SECONDS   300UL
+#define ACQUISITION_BUFFER_BYTES     (SAMPLE_SIZE_BYTES * ACQUISITION_MAX_HZ * ACQUISITION_WINDOW_SECONDS)
 #define ACQUISITION_FRAME_CAPACITY   (ACQUISITION_BUFFER_BYTES / SAMPLE_SIZE_BYTES)
 #define ACQUISITION_USABLE_BYTES     (ACQUISITION_FRAME_CAPACITY * SAMPLE_SIZE_BYTES)
 
-static_assert(ACQUISITION_BUFFER_BYTES == 700000UL,
-              "allocation must stay at the size production uses");
-static_assert(ACQUISITION_FRAME_CAPACITY == 38888UL,
-              "700000 / 18 must be 38888 whole frames");
-static_assert(ACQUISITION_USABLE_BYTES == 38888UL * 18UL,
-              "usable size must be a whole number of frames");
+static_assert(ACQUISITION_BUFFER_BYTES == 1080000UL,
+              "200 Hz x 300 s x 18 B must be 1080000 bytes");
+static_assert(ACQUISITION_FRAME_CAPACITY == 60000UL,
+              "1080000 / 18 must be 60000 whole frames");
+static_assert(ACQUISITION_USABLE_BYTES == ACQUISITION_BUFFER_BYTES,
+              "the ring must span the whole allocation, with no unused tail");
 
 #endif // BOARD_H

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from config.settings import (
     DEFAULT_SLEEP_MIN, DEFAULT_IDLE_MIN,
     DEFAULT_MAX_ACQ, DEFAULT_COOLDOWN_SEC, DEFAULT_UPDATE,
-    HISTORY_MAX_CONNECTIONS,
+    HISTORY_MAX_CONNECTIONS, SAMPLING_CODE,
 )
 
 
@@ -17,6 +17,10 @@ class DeviceConfig:
     idle_min:     int = DEFAULT_IDLE_MIN
     max_acq:      int = DEFAULT_MAX_ACQ
     cooldown_sec: int = DEFAULT_COOLDOWN_SEC
+    # The ODR nibble every device is told to run. It is not editable from the
+    # web form: the rate is a fleet-wide decision taken at deploy time, and a
+    # form field would let one careless save re-rate every sensor in the plant.
+    sampling_code: int = SAMPLING_CODE
 
 
 @dataclass

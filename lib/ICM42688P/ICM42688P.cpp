@@ -10,6 +10,14 @@ void ICM42688P::wake()
 {
     wakeup(_range, _odr);
 }
+
+void ICM42688P::setSamplingCode(uint8_t odrNibble)
+{
+    // Stored, not written: ACCEL_CONFIG0 and GYRO_CONFIG0 are written by
+    // wakeup(), while the sensors come out of OFF. Writing here would land on a
+    // part that may be asleep, and be overwritten by the next wake() anyway.
+    _odr = (OdrFreq)(odrNibble & 0x0F);
+}
 bool ICM42688P::begin(int8_t sck, int8_t miso, int8_t mosi)
 {
     _spi->begin(sck, miso, mosi, _cs_pin);

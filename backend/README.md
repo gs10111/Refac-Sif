@@ -46,6 +46,21 @@ Ambas vêm do ambiente: `SERVER_PORT` e `WEB_PORT` (os valores acima são os
 padrões). Um valor que não seja inteiro derruba o servidor no boot, em vez de
 voltar em silêncio para o padrão.
 
+### Taxa de amostragem da frota
+
+`SIF_SAMPLING_HZ` escolhe a taxa que o servidor manda para todo sensor que
+conectar: `200`, `100`, `50`, `25` ou `12.5`. O padrão é `50`, a taxa que a
+frota rodava antes de a taxa ser configurável.
+
+```bash
+SIF_SAMPLING_HZ=200 python -m server.tcp_server
+```
+
+O sensor grava a taxa nova na NVS quando ela muda e a adota **no boot
+seguinte** — a captura em curso termina na taxa antiga. Uma taxa que o
+ICM-42688-P não roda derruba o servidor no boot: cair para 50 Hz em silêncio
+daria uma frota amostrando numa taxa que ninguém escolheu e ninguém vê.
+
 Para parar: digite `q` + Enter no terminal.
 
 ---
@@ -145,7 +160,7 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-111 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
+166 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
 
 ---
 

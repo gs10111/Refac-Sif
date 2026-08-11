@@ -42,6 +42,8 @@ public:
     FakeImu() : _ready(false), _marker(0), _wakeCalls(0), _sleepCalls(0) {}
 
     void wake() override { _wakeCalls++; }
+    void setSamplingCode(uint8_t code) override { _samplingCode = code; }
+    uint8_t samplingCode() const { return _samplingCode; }
     void sleep() override { _sleepCalls++; }
 
     ImuStatus readSensorFrame(uint8_t *out) override
@@ -56,6 +58,7 @@ public:
     void setReady(bool ready) { _ready = ready; }
     void setMarker(uint8_t marker) { _marker = marker; }
     uint32_t wakeCalls() const { return _wakeCalls; }
+    uint8_t _samplingCode = 0;
     uint32_t sleepCalls() const { return _sleepCalls; }
 
 private:

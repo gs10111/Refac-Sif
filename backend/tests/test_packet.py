@@ -16,7 +16,7 @@ from protocol.packet import (
 )
 from config.settings import (
     DEFAULT_SLEEP_MIN, DEFAULT_IDLE_MIN, DEFAULT_MAX_ACQ,
-    DEFAULT_COOLDOWN_SEC, DEFAULT_UPDATE,
+    DEFAULT_COOLDOWN_SEC, DEFAULT_UPDATE, SAMPLING_CODE,
 )
 
 
@@ -28,41 +28,49 @@ ORIGINAL_CSV_HEADER = [
 ]
 
 # struct.pack('<HHHHH', 240, 20, 5, 5, 1) — what pyFiles/win_server.py:114 emits
-# with the agreed defaults and the OTA flag set.
+# with the agreed defaults and the OTA flag set. It is now the PREFIX of the
+# response: the rate field was appended, so these ten bytes keep their offsets.
 GOLDEN_RESPONSE_UPDATE_ON = b'\xf0\x00\x14\x00\x05\x00\x05\x00\x01\x00'
 
+# 50 Hz, the rate the fleet ran before the rate became configurable.
+FIFTY_HZ = 9
+
 
 # --------------------------------------------------------------------------
-# Server → ESP32 response: 10 bytes, 5 × uint16 LE
+# Server → ESP32 response: 12 bytes, 6 × uint16 LE
 # --------------------------------------------------------------------------
 
-def test_server_config_size_is_10():
-    """The response grew from 8 to 10 bytes when `update` was restored."""
-    assert SERVER_CONFIG_SIZE == 10
+def test_server_config_size_is_12():
+    """The response grew from 10 to 12 bytes when the rate became configurable."""
+    assert SERVER_CONFIG_SIZE == 12
 
 
-def test_pack_server_config_returns_10_bytes():
-    assert len(pack_server_config(240, 20, 5, 5, 0)) == SERVER_CONFIG_SIZE
+def test_pack_server_config_returns_12_bytes():
+    assert len(pack_server_config(240, 20, 5, 5, 0, FIFTY_HZ)) == SERVER_CONFIG_SIZE
 
 
 def test_pack_server_config_field_order():
-    """Field order is the original one: sleep, idle, max_acq, cooldown, update."""
-    packed = pack_server_config(240, 20, 5, 5, 1)
-    assert struct.unpack('<HHHHH', packed) == (240, 20, 5, 5, 1)
+    """Field order extends the original at the end: sleep, idle, max_acq,
+    cooldown, update, sampling_code."""
+    packed = pack_server_config(240, 20, 5, 5, 1, 7)
+    assert struct.unpack('<HHHHHH', packed) == (240, 20, 5, 5, 1, 7)
 
 
-def test_pack_server_config_matches_win_server_golden_bytes():
-    """Byte-for-byte identical to the production server's response."""
-    assert pack_server_config(240, 20, 5, 5, 1) == GOLDEN_RESPONSE_UPDATE_ON
+def test_pack_server_config_keeps_the_win_server_bytes_as_its_prefix():
+    """The five production fields stay byte-for-byte where they were: a device
+    reading the old layout finds them at the same offsets, and only misses the
+    field that did not exist when it was flashed."""
+    assert pack_server_config(240, 20, 5, 5, 1, FIFTY_HZ)[:10] == GOLDEN_RESPONSE_UPDATE_ON
 
 
 def test_pack_server_config_defaults_match_settings():
-    """Packing the documented defaults reproduces the golden frame (update=0)."""
+    """Packing the documented defaults reproduces the golden frame (update=0)
+    followed by the configured rate."""
     packed = pack_server_config(
         DEFAULT_SLEEP_MIN, DEFAULT_IDLE_MIN, DEFAULT_MAX_ACQ,
-        DEFAULT_COOLDOWN_SEC, DEFAULT_UPDATE,
+        DEFAULT_COOLDOWN_SEC, DEFAULT_UPDATE, SAMPLING_CODE,
     )
-    assert packed == b'\xf0\x00\x14\x00\x05\x00\x05\x00\x00\x00'
+    assert packed == b'\xf0\x00\x14\x00\x05\x00\x05\x00\x00\x00' + struct.pack('<H', SAMPLING_CODE)
 
 
 def test_pack_server_config_requires_update_argument():
@@ -71,11 +79,17 @@ def test_pack_server_config_requires_update_argument():
         pack_server_config(240, 20, 5, 5)
 
 
+def test_pack_server_config_requires_the_sampling_code():
+    """Nor does the rate: re-rating a fleet is as deliberate as arming OTA."""
+    with pytest.raises(TypeError):
+        pack_server_config(240, 20, 5, 5, 0)
+
+
 @pytest.mark.parametrize('update', [2, 65535, -1])
 def test_pack_server_config_rejects_update_out_of_range(update):
     """Only 0 and 1 may reach the wire; the firmware treats any non-zero as OTA."""
     with pytest.raises(ValueError):
-        pack_server_config(240, 20, 5, 5, update)
+        pack_server_config(240, 20, 5, 5, update, FIFTY_HZ)
 
 
 # --------------------------------------------------------------------------

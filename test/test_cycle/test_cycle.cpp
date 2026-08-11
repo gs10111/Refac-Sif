@@ -75,6 +75,7 @@ class SilentImu : public IImu
 {
 public:
     void wake() override {}
+    void setSamplingCode(uint8_t) override {}
     void sleep() override {}
     ImuStatus readSensorFrame(uint8_t *out) override
     {
@@ -99,6 +100,30 @@ public:
 private:
     CallLog &_log;
     bool _connects;
+};
+
+// A transport whose config reply carries a chosen rate, so a test can watch what
+// the cycle does with a rate that differs from the one already stored.
+class RatedTransport : public ITransport
+{
+public:
+    RatedTransport(uint16_t samplingCode) : _code(samplingCode) {}
+    bool open(const char *, uint16_t) override { return true; }
+    uint32_t write(const uint8_t *, uint32_t len) override { return len; }
+    uint32_t readExact(uint8_t *out, uint32_t len, uint32_t) override
+    {
+        const uint8_t reply[SERVER_CONFIG_WIRE_BYTES] = {
+            0xF0, 0x00, 0x14, 0x00, 0x05, 0x00, 0x05, 0x00, 0x00, 0x00,
+            (uint8_t)(_code & 0xFF), (uint8_t)(_code >> 8)};
+        uint32_t n = (len < SERVER_CONFIG_WIRE_BYTES) ? len : SERVER_CONFIG_WIRE_BYTES;
+        for (uint32_t i = 0; i < n; i++)
+            out[i] = reply[i];
+        return n;
+    }
+    void close() override {}
+
+private:
+    uint16_t _code;
 };
 
 class QuietCpu : public ICpu
@@ -152,12 +177,24 @@ private:
 class MemoryStore : public IKeyValueStore
 {
 public:
-    MemoryStore() : _value(false) {}
+    MemoryStore() : _value(false), _ushort(DEFAULT_SAMPLING_CODE), _ushortWrites(0) {}
     bool getBool(const char *, bool) override { return _value; }
     void putBool(const char *, bool value) override { _value = value; }
+    uint16_t getUShort(const char *, uint16_t) override { return _ushort; }
+    void putUShort(const char *, uint16_t value) override
+    {
+        _ushort = value;
+        _ushortWrites++;
+    }
+
+    void seedUShort(uint16_t value) { _ushort = value; }
+    uint16_t ushort() const { return _ushort; }
+    uint32_t ushortWrites() const { return _ushortWrites; }
 
 private:
     bool _value;
+    uint16_t _ushort;
+    uint32_t _ushortWrites;
 };
 
 // Advances by a fixed step on every read, so a test can drive the acquisition loop
@@ -341,12 +378,101 @@ static void test_an_idle_timeout_turns_the_radio_off_and_transmits_nothing(void)
     TEST_ASSERT_EQUAL_UINT32(0, transport.bytesWritten());
 }
 
+// ---------------------------------------------------------------------------
+// Sampling rate — the server picks it, the device stores it, the next boot runs it
+// ---------------------------------------------------------------------------
+
+// Builds the whole cycle around a transport whose reply carries `sentCode`, with
+// `storedCode` already in NVS, and runs one iteration.
+static void run_cycle_with_rate(uint16_t storedCode, uint16_t sentCode,
+                                MemoryStore &store, ServerConfig &config)
+{
+    CallLog log;
+    SilentImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    acq.setConfig(default_server_config());
+    BeltTrigger trigger;
+    trigger.begin(0, 0);
+    LoggingRadio radio(log, true);
+    QuietCpu cpu;
+    QuietSleeper sleeper;
+    PowerManager power(imu, radio, cpu, sleeper);
+    RatedTransport transport(sentCode);
+    SteppingClock clock(1);
+    ScriptedPin pin(kHighReads);
+    FixedBattery battery;
+
+    store.seedUShort(storedCode);
+
+    CycleRunner runner(acq, trigger, ring, power, radio, transport, store, pin,
+                       battery, clock);
+    runner.runIteration(network(), config);
+}
+
+static void test_a_new_rate_from_the_server_is_written_to_nvs(void)
+{
+    MemoryStore store;
+    ServerConfig config = default_server_config();
+
+    run_cycle_with_rate(SAMPLING_CODE_50HZ, SAMPLING_CODE_200HZ, store, config);
+
+    TEST_ASSERT_EQUAL_UINT16(SAMPLING_CODE_200HZ, store.ushort());
+    TEST_ASSERT_EQUAL_UINT32(1, store.ushortWrites());
+    TEST_ASSERT_EQUAL_UINT16(SAMPLING_CODE_200HZ, config.sampling_code);
+}
+
+static void test_the_rate_already_stored_is_not_written_again(void)
+{
+    // Every capture answers with the same rate. Writing it each time would burn
+    // the flash for no change at all.
+    MemoryStore store;
+    ServerConfig config = default_server_config();
+
+    run_cycle_with_rate(SAMPLING_CODE_50HZ, SAMPLING_CODE_50HZ, store, config);
+
+    TEST_ASSERT_EQUAL_UINT32(0, store.ushortWrites());
+}
+
+static void test_a_server_with_no_opinion_leaves_the_stored_rate_alone(void)
+{
+    // Code 0 is a server that does not configure rates — win_server, which
+    // exists to flash firmware. It must not re-rate the device to nothing.
+    MemoryStore store;
+    ServerConfig config = default_server_config();
+    config.sampling_code = SAMPLING_CODE_200HZ;
+
+    run_cycle_with_rate(SAMPLING_CODE_200HZ, 0, store, config);
+
+    TEST_ASSERT_EQUAL_UINT32(0, store.ushortWrites());
+    TEST_ASSERT_EQUAL_UINT16(SAMPLING_CODE_200HZ, store.ushort());
+    TEST_ASSERT_EQUAL_UINT16(SAMPLING_CODE_200HZ, config.sampling_code);
+}
+
+static void test_a_reserved_nibble_from_the_server_is_refused(void)
+{
+    // 13 is Reserved for the gyroscope. Written to NVS it would be applied at
+    // the next boot, configuring the part into an undefined mode.
+    MemoryStore store;
+    ServerConfig config = default_server_config();
+
+    run_cycle_with_rate(SAMPLING_CODE_50HZ, 13, store, config);
+
+    TEST_ASSERT_EQUAL_UINT32(0, store.ushortWrites());
+    TEST_ASSERT_EQUAL_UINT16(SAMPLING_CODE_50HZ, store.ushort());
+    TEST_ASSERT_EQUAL_UINT16(SAMPLING_CODE_50HZ, config.sampling_code);
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_the_radio_is_turned_off_after_a_successful_iteration);
     RUN_TEST(test_the_radio_is_turned_off_when_the_connection_fails);
     RUN_TEST(test_an_idle_timeout_turns_the_radio_off_and_transmits_nothing);
+    RUN_TEST(test_a_new_rate_from_the_server_is_written_to_nvs);
+    RUN_TEST(test_the_rate_already_stored_is_not_written_again);
+    RUN_TEST(test_a_server_with_no_opinion_leaves_the_stored_rate_alone);
+    RUN_TEST(test_a_reserved_nibble_from_the_server_is_refused);
     return UNITY_END();
 }
 

@@ -38,6 +38,8 @@ pio test -e mutant_disarm_writes_unconditionally
 pio test -e mutant_max_acq_off_by_one
 pio test -e mutant_radio_off_only_on_success
 pio test -e mutant_frame_capacity_rounds_up
+pio test -e mutant_sampling_trusts_server
+pio test -e mutant_sampling_writes_unconditionally
 pio test -e mutant_battery_read_before_upload
 ```
 
@@ -65,6 +67,8 @@ rather than enforcing a behaviour.
 | `mutant_send_from_index_zero` | `MUTANT_SEND_FROM_INDEX_ZERO` | the uploader sends only the first range, from index 0, ignoring `tail` — R8 verbatim | `test_transmit` T45 | **every other test in the suite** — they use an unwrapped ring, where the two implementations agree byte for byte. That is why R8 survived review: the wrong code is correct for the first thirteen minutes |
 | `mutant_imu_stays_awake_on_trigger_sleep` | `MUTANT_IMU_STAYS_AWAKE_ON_TRIGGER_SLEEP` | `PowerManager` skips `imu.sleep()` on the ext0 path only — R5 on the sleep that lasts hours | `test_power` T38 | **T37**, deliberately: breaking one path proves the two are pinned independently, which killing both would not |
 | `mutant_skip_allocation_check` | `MUTANT_SKIP_ALLOCATION_CHECK` | `make_sample_ring` does not check the allocation, building a full-capacity ring over a null pointer — R1 restored | `test_sample_store` T35, T36b | **T36** — nothing is written anyway, because `RingBuffer` refuses a null storage pointer. The defence is in the ring, not in the check |
+| `mutant_sampling_trusts_server` | `MUTANT_SAMPLING_TRUSTS_SERVER` | the rate the server sends is stored with no whitelist, so a nibble the datasheet Reserves (12-14) or the 0 of a server with no opinion is applied at the next boot | `test_cycle` `..._a_reserved_nibble_from_the_server_is_refused` and `..._a_server_with_no_opinion_leaves_the_stored_rate_alone` | every test that sends a rate the part CAN run — the whitelist is invisible when the input is already valid |
+| `mutant_sampling_writes_unconditionally` | `MUTANT_SAMPLING_WRITES_UNCONDITIONALLY` | the rate is written to NVS on every config receipt instead of only when it changes: right state, one flash write per capture | `test_cycle` `..._the_rate_already_stored_is_not_written_again` | every test that checks WHICH rate ended up stored — the value is correct either way |
 
 Each flag is documented at the `#ifdef` that implements it. Rules:
 

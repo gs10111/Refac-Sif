@@ -61,6 +61,62 @@ CycleOutcome CycleRunner::runIteration(const NetworkConfig &network, ServerConfi
 
             if (upload.configReceived)
             {
+                // The rate is the one field the device must remember across the
+                // deep sleep, so it is decided here rather than carried in RAM.
+                // A code the part cannot run — 0 from a server with no opinion,
+                // or a nibble the datasheet Reserves — leaves both NVS and the
+                // running config on the rate already in force. Writing only on
+                // a real change keeps the flash out of the per-capture path.
+#ifdef MUTANT_SAMPLING_TRUSTS_SERVER
+                // ==== MUTATION: MUTANT_SAMPLING_TRUSTS_SERVER ====
+                // Built only by [env:mutant_sampling_trusts_server].
+                // Never by env:native or env:pico32.
+                // Run it:  pio test -e mutant_sampling_trusts_server
+                //
+                // BREAKS: whatever the server sends is stored as the rate, with no
+                //         whitelist. A nibble the datasheet Reserves (12-14), or the
+                //         0 a server with no opinion sends, is persisted and applied
+                //         at the next boot.
+                // WHY:    the device still runs and still transmits, so nothing fails
+                //         loudly. It samples in a mode the part does not define.
+                // CAUGHT BY: test_cycle test_a_reserved_nibble_from_the_server_is_refused
+                //            and test_a_server_with_no_opinion_leaves_the_stored_rate_alone.
+                if (received.sampling_code !=
+                    _store.getUShort(SAMPLING_CODE_NVS_KEY, DEFAULT_SAMPLING_CODE))
+                {
+                    _store.putUShort(SAMPLING_CODE_NVS_KEY, received.sampling_code);
+                }
+#elif defined(MUTANT_SAMPLING_WRITES_UNCONDITIONALLY)
+                // ==== MUTATION: MUTANT_SAMPLING_WRITES_UNCONDITIONALLY ====
+                // Built only by [env:mutant_sampling_writes_unconditionally].
+                // Never by env:native or env:pico32.
+                // Run it:  pio test -e mutant_sampling_writes_unconditionally
+                //
+                // BREAKS: the rate is written to NVS on every config receipt rather
+                //         than only when it changes. Right state, wrong write count.
+                // WHY:    invisible to any test that only checks which rate ended up
+                //         stored; its cost is flash endurance, one write per capture.
+                // CAUGHT BY: test_cycle test_the_rate_already_stored_is_not_written_again.
+                if (!is_valid_sampling_code(received.sampling_code))
+                {
+                    received.sampling_code = config.sampling_code;
+                }
+                else
+                {
+                    _store.putUShort(SAMPLING_CODE_NVS_KEY, received.sampling_code);
+                }
+#else
+                if (!is_valid_sampling_code(received.sampling_code))
+                {
+                    received.sampling_code = config.sampling_code;
+                }
+                else if (received.sampling_code !=
+                         _store.getUShort(SAMPLING_CODE_NVS_KEY, DEFAULT_SAMPLING_CODE))
+                {
+                    _store.putUShort(SAMPLING_CODE_NVS_KEY, received.sampling_code);
+                }
+#endif
+
                 config = received;
                 _acq.setConfig(config);
                 _trigger.setCooldownSec(config.trigger_cooldown_sec);

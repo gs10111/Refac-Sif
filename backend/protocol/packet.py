@@ -3,7 +3,32 @@ import struct
 SAMPLE_SIZE_BYTES  = 18
 HEADER_SIZE_BYTES  =  4
 BATTERY_SIZE_BYTES =  2
-SERVER_CONFIG_SIZE = 10  # 5 × uint16_t
+SERVER_CONFIG_SIZE = 12  # 6 × uint16_t
+
+# ODR nibble of ACCEL_CONFIG0 / GYRO_CONFIG0 on the ICM-42688-P, keyed by the
+# rate in Hz as the operator writes it.
+#
+# Only the rates where accelerometer AND gyroscope both run: codes 12-14 are
+# Reserved for the gyroscope on this part — they are not an accelerometer-only
+# low-power mode to be discovered later. Code 15 (500 Hz) works on both and is
+# left out by scope, not by hardware.
+SAMPLING_CODES = {
+    '200':  7,
+    '100':  8,
+    '50':   9,
+    '25':  10,
+    '12.5': 11,
+}
+
+# Inverse table. A dict rather than a linear search makes the codes' uniqueness
+# structural instead of implied.
+_HZ_BY_SAMPLING_CODE = {code: hz for hz, code in SAMPLING_CODES.items()}
+
+# A server with no opinion about the rate sends this. 0 is Reserved as an ODR
+# nibble, so a firmware that whitelists codes keeps whatever rate it is running.
+SAMPLING_CODE_NO_CHANGE = 0
+
+DEFAULT_SAMPLING_HZ = '50'
 
 # Every field of the response travels as a uint16. This is the width of the
 # wire field, not a tunable policy.
@@ -21,15 +46,57 @@ def parse_sample(raw: bytes) -> list:
     fields    = list(struct.unpack_from('<7h', raw, 4))
     return [timestamp] + fields
 
-def pack_server_config(sleep_min, idle_min, max_acq, cooldown_sec, update) -> bytes:
-    """Pack the 10-byte server → ESP32 response.
+def sampling_code_from_hz(hz) -> int:
+    """Translate a rate in Hz into the ODR nibble that travels on the wire.
 
-    Field order is the production one (pyFiles/win_server.py:114):
-    sleep_min, idle_min, max_acq, cooldown_sec, update.
+    Accepts what an operator would type: '50', '50.0', 50, 12.5. Raises rather
+    than falling back, because a rate silently replaced by another is a fleet
+    sampling at something nobody chose and nobody can see.
+    """
+    key = str(hz).strip()
+    if key.endswith('.0'):          # '50.0' and '50' are the same intent
+        key = key[:-2]
+    if key not in SAMPLING_CODES:
+        accepted = ', '.join(f'{rate} Hz' for rate in SAMPLING_CODES)
+        raise ValueError(
+            f'Taxa de amostragem invalida: {hz!r}. Aceitas: {accepted}.'
+        )
+    return SAMPLING_CODES[key]
 
-    `update` has no default on purpose: arming a device into OTA is a
-    deliberate act, so every call site must say which one it means.
+
+def sampling_hz_from_code(code: int) -> str:
+    """The rate a code stands for, for logs and for the connection history."""
+    if code == SAMPLING_CODE_NO_CHANGE:
+        return 'inalterada'
+    return _HZ_BY_SAMPLING_CODE.get(code, 'desconhecida')
+
+
+def pack_server_config(sleep_min, idle_min, max_acq, cooldown_sec, update,
+                       sampling_code) -> bytes:
+    """Pack the 12-byte server → ESP32 response.
+
+    Field order is the wire order, and it extends the production one
+    (pyFiles/win_server.py:114) at the end: sleep_min, idle_min, max_acq,
+    cooldown_sec, update, sampling_code. The five original fields keep their
+    offsets, so a device reading the old layout still finds them where it
+    expects — what it will not find is the twelfth byte, and a short frame
+    leaves its config untouched by design.
+
+    Neither `update` nor `sampling_code` has a default: arming a device into
+    OTA and changing the rate of a whole fleet are both deliberate acts, so
+    every call site says which one it means.
     """
     if update not in (0, 1):
         raise ValueError(f'update must be 0 or 1, got {update!r}')
-    return struct.pack('<HHHHH', sleep_min, idle_min, max_acq, cooldown_sec, update)
+    if (sampling_code != SAMPLING_CODE_NO_CHANGE
+            and sampling_code not in _HZ_BY_SAMPLING_CODE):
+        accepted = ', '.join(
+            f'{code} ({_HZ_BY_SAMPLING_CODE[code]} Hz)'
+            for code in sorted(_HZ_BY_SAMPLING_CODE)
+        )
+        raise ValueError(
+            f'Codigo de amostragem invalido: {sampling_code!r}. '
+            f'Aceitos: {accepted} ou {SAMPLING_CODE_NO_CHANGE} (sem mudanca).'
+        )
+    return struct.pack('<HHHHHH', sleep_min, idle_min, max_acq, cooldown_sec,
+                       update, sampling_code)
