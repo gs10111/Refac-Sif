@@ -46,6 +46,14 @@ Ambas vêm do ambiente: `SERVER_PORT` e `WEB_PORT` (os valores acima são os
 padrões). Um valor que não seja inteiro derruba o servidor no boot, em vez de
 voltar em silêncio para o padrão.
 
+### Publicação no ThingsBoard (opcional)
+
+`SIF_MQTT_ENABLED=1` mais `SIF_MQTT_HOST` fazem o servidor publicar cada captura
+num broker MQTT local, de onde o `thingsboard-gateway` a encaminha. O CSV e a
+cópia para o Drive continuam iguais — a publicação é adição ao caminho de
+gravação, nunca portão na frente dele. Ligado sem host, o servidor não sobe.
+Detalhes, tópicos e instalação: [`gateway/README.md`](../gateway/README.md).
+
 ### Taxa de amostragem da frota
 
 `SIF_SAMPLING_HZ` escolhe a taxa que o servidor manda para todo sensor que
@@ -160,7 +168,7 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-166 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
+196 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
 
 ---
 

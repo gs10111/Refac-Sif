@@ -14,7 +14,8 @@
 2. **TDD, com o vermelho observado.** Teste antes da implementação, provando o critério de aceite da
    spec — não algo parecido.
    - Firmware: `~/.platformio/penv/bin/pio test -e native`
-   - Backend: `backend/venv/bin/python -m pytest -q` (150 testes, ~1 s)
+   - Backend: `backend/venv/bin/python -m pytest -q` (196 testes, ~1 s)
+   - Gateway: `backend/venv/bin/python -m pytest gateway -q` (11 testes; rodam sem broker e sem o thingsboard-gateway instalado)
    - Prova de que o teste **detecta**, não só passa: `pio test -e mutant_<nome>` — ali a **falha é a
      condição de sucesso** (`platformio.ini`, envs `mutant_*`; racional em `test/README.md`).
    - **Cole o vermelho no PR.** Aqui não existe CI para registrar isso por você (ver "Diferenças").
@@ -44,8 +45,8 @@
 | PR toca em… | Revisores obrigatórios |
 |---|---|
 | credencial WiFi, senha do SoftAP de OTA, segredo em `Preferences`, arquivo git-ignored de credencial (DEC-2) | **Security** + **QA** |
-| `platformio.ini`, `.github/**` (quando existir), bind/porta do backend (`SERVER_IP`, `SERVER_PORT`, `WEB_PORT`), provisionamento, deploy | **SRE** + **Security** |
-| wire contract (`[4 B total][N × 18 B][2 B bateria]`, config de 10 B), `struct ServerConfig`, colunas do CSV, `stage`/`RTC_DATA_ATTR` | **Architect** + **QA** |
+| `platformio.ini`, `.github/**` (quando existir), bind/porta do backend (`SERVER_IP`, `SERVER_PORT`, `WEB_PORT`, `SIF_MQTT_*`), `gateway/**`, provisionamento, deploy | **SRE** + **Security** |
+| wire contract (`[4 B total][N × 18 B][2 B bateria]`, config de 12 B), `struct ServerConfig`, códigos ODR, colunas do CSV, `stage`/`RTC_DATA_ATTR` | **Architect** + **QA** |
 | `test/**`, `backend/tests/**`, envs `mutant_*` | **QA** |
 
 ## Sem rede em teste — o padrão daqui
@@ -55,7 +56,9 @@ O equivalente local ao `TBClient`:
 - **Firmware:** as interfaces puras em `lib/hal/*.h` (`ITransport`, `IRadio`, `IClock`, `IAllocator`,
   `IKeyValueStore`, `IAccessPoint`, …). A dependência entra **injetada**; `env:native` roda com falso,
   nunca com hardware.
-- **Backend:** socket mockado injetado — `exchange()` em `backend/tests/test_tcp_server.py:67`.
+- **Backend:** socket mockado injetado — `exchange()` em `backend/tests/test_tcp_server.py:67`; e o
+  cliente MQTT injetado em `backend/tests/test_telemetry_publisher.py`, que por isso roda sem broker
+  e sem `paho` instalado.
 - **Exceção única, já documentada:** `backend/tests/test_integration_socket.py` usa socket real de
   loopback em porta 0 (o kernel escolhe), com a justificativa no docstring — só um socket de verdade
   prova contagem de bytes. Loopback justificado passa; qualquer coisa que **saia da máquina**, não.
@@ -66,15 +69,17 @@ O equivalente local ao `TBClient`:
   OTA. Esse é o nível de disciplina esperado.
 - **DIP** — `lib/hal/*.h` existe para isso: é o que torna o teste possível sem hardware.
 - **OCP/LSP/ISP** — só com caso concreto. Não inventar abstração para satisfazer sigla.
-- **Parse na fronteira, uma vez** (P2): os 10 B da config e os frames de 18 B se validam na borda;
+- **Parse na fronteira, uma vez** (P2): os 12 B da config e os frames de 18 B se validam na borda;
   depois disso ninguém revalida.
 
 ## Fail-closed — casos deste repo
 
-- `ps_malloc` do buffer de 700000 B: null-check → **halt + Serial** (D2). Não degradar em silêncio
+- `ps_malloc` do buffer de 1080000 B: null-check → **halt + Serial**. Não degradar em silêncio
   para um buffer menor.
 - Credencial ausente: o build embarcado **falha alto** (DEC-2). Nunca compilar com um default.
-- Config do servidor: a leitura exige os **10 bytes**; curto é erro, não leitura parcial.
+- Config do servidor: a leitura exige os **12 bytes**; curto é erro, não leitura parcial.
+- Publicação MQTT: `SIF_MQTT_ENABLED` sem `SIF_MQTT_HOST` **não sobe o servidor**; publicar no vazio
+  seria pior que recusar iniciar.
 - `except` que só loga e segue precisa justificar **por escrito** por que seguir é correto.
 
 ## Duas diferenças que aumentam o risco aqui

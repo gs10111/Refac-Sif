@@ -1,0 +1,58 @@
+# ----------------------------------------------------------------------------
+# ThingsBoard IoT Gateway — roda na mesma máquina do servidor TCP.
+#
+#   docker compose -f docker-compose.gateway.yml up -d
+#
+# Antes: copie tb_gateway.json.example para tb_gateway.json, preencha host e
+# accessToken, ponha o ca.pem ao lado, e extraia gw-config da imagem (README).
+# ----------------------------------------------------------------------------
+
+services:
+  tb-gateway:
+    image: thingsboard/tb-gateway
+    container_name: tb-gateway
+    restart: always
+
+    # O Mosquitto escuta só em 127.0.0.1. Em rede bridge o contêiner não
+    # alcançaria o loopback do host; a alternativa seria abrir o broker para a
+    # rede, e ele não tem autenticação. network_mode: host resolve sem isso.
+    #
+    # Efeito colateral: as portas do contêiner são as do host. Não há porta a
+    # publicar — o gateway só faz conexões de saída.
+    network_mode: host
+
+    volumes:
+      # Diretório inteiro, não arquivo isolado: o gateway grava estado aqui (o
+      # cache de configuração remota, entre outros) e um mount de arquivo
+      # impediria essas escritas.
+      #
+      # gw-config PRECISA ser extraído da imagem antes (README, passo 4):
+      #   docker create --name tmp-gw thingsboard/tb-gateway
+      #   docker cp tmp-gw:/thingsboard_gateway/config ./gw-config
+      #   docker rm tmp-gw
+      # Montar um diretório só com os nossos dois arquivos descartaria o resto
+      # da configuração que a imagem traz.
+      - ./gw-config:/thingsboard_gateway/config
+
+      # Converter customizado. É ele que preserva o timestamp de cada amostra;
+      # sem ele o gateway carimba a hora de chegada e colapsa a captura inteira
+      # num só instante.
+      - ./sif_burst_converter.py:/thingsboard_gateway/extensions/mqtt/sif_burst_converter.py:ro
+
+      # Certificado público do ThingsBoard, para validar o servidor no TLS.
+      - ./ca.pem:/thingsboard_gateway/ca.pem:ro
+
+      # Buffer de store-and-forward. Volume nomeado de propósito: se o link cair,
+      # é aqui que as capturas esperam, e perder isso num recreate do contêiner
+      # significaria perder o que ainda não foi entregue.
+      #
+      # A imagem não traz /thingsboard_gateway/data — o Docker o cria ao montar.
+      # /thingsboard_gateway/storage EXISTE na imagem, mas é o módulo Python do
+      # subsistema de armazenamento: montar volume ali quebra o código.
+      - tb-gw-data:/thingsboard_gateway/data
+
+      - tb-gw-logs:/thingsboard_gateway/logs
+
+volumes:
+  tb-gw-data:
+  tb-gw-logs:
