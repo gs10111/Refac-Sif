@@ -3,6 +3,12 @@ import os
 SERVER_IP   = os.getenv('SERVER_IP',   '0.0.0.0')
 SERVER_PORT = int(os.getenv('SERVER_PORT', '12345'))
 
+# The web UI port. Absent means 8080 — the port the plant already has in its
+# bookmarks. A value that is not an integer raises here, at import, rather than
+# falling back to 8080: a server answering on a port the operator did not
+# choose is worse than one that refuses to start.
+WEB_PORT    = int(os.getenv('WEB_PORT',    '8080'))
+
 GDRIVE_PATH = os.getenv(
     'GDRIVE_PATH',
     '/run/user/1000/gvfs/google-drive:host=gmail.com,user=valev6852/0ALPQP0Ju3mfQUk9PVA'

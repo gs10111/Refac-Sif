@@ -4,6 +4,9 @@ from flask import (
 )
 
 from app_state import AppState
+# Imported as a module, not `from config.settings import WEB_PORT`: read at call
+# time the setting can be replaced in a test without reloading every importer.
+from config import settings
 from protocol.packet import UINT16_MAX
 
 # Fixed order — the error message lists offenders in form order, never in dict
@@ -101,6 +104,10 @@ def create_app(state: AppState) -> Flask:
     return app
 
 
-def web_server_main(state: AppState, port: int = 8080) -> None:
+def web_server_main(state: AppState, port: int | None = None) -> None:
     app = create_app(state)
-    app.run(host='0.0.0.0', port=port, use_reloader=False)
+    app.run(
+        host='0.0.0.0',
+        port=settings.WEB_PORT if port is None else port,
+        use_reloader=False,
+    )
