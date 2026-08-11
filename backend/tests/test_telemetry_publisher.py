@@ -123,6 +123,12 @@ def test_a_capture_whose_mean_interval_is_impossible_is_not_plausible():
     assert is_plausible_burst([row(0), row(too_far)]) is False
 
 
+def test_a_capture_exactly_at_the_limit_is_still_published():
+    """The limit is inclusive. Without this case, tightening the comparison to
+    `<` would silently start discarding captures at the boundary."""
+    assert is_plausible_burst([row(0), row(MAX_MEAN_INTERVAL_MS)]) is True
+
+
 def test_a_long_but_evenly_spaced_capture_is_plausible():
     """20 minutes at 12.5 Hz is the shape the fleet is allowed to produce."""
     samples = [row(i * 80) for i in range(1000)]
@@ -184,7 +190,9 @@ def test_an_empty_burst_is_refused_with_a_reason():
 
     reason = TelemetryPublisher(client=client).publish('10.0.0.7', [], 4100, ANCHOR)
 
-    assert reason is not None
+    # The text is asserted, not just its presence: a reason that is an empty
+    # string reads as "published" to whoever records the capture.
+    assert 'vazio' in reason
     assert client.published == []
 
 

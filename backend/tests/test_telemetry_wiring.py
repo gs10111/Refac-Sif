@@ -78,6 +78,15 @@ def test_the_battery_comes_from_the_row_the_server_already_appended(tmp_path, mo
     assert publisher.calls[0][2] == BATTERY_MV
 
 
+def test_the_battery_index_follows_the_csv_contract_instead_of_a_literal():
+    """The queued rows are the CSV rows. Pinning the index to the column name is
+    what keeps a future column insertion from feeding a gyro reading as volts."""
+    from protocol.packet import BATTERY_COLUMN, CSV_COLUMNS
+
+    assert tcp_server.BATTERY_COLUMN_INDEX == CSV_COLUMNS.index(BATTERY_COLUMN)
+    assert ROWS[0][tcp_server.BATTERY_COLUMN_INDEX] == BATTERY_MV
+
+
 def test_the_csv_is_written_whether_or_not_anything_is_published(tmp_path, monkeypatch):
     """The CSV is the record of last resort: a broker that is down, a burst the
     publisher refuses, or no publisher at all must not cost the file."""

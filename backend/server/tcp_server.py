@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from protocol.packet import (
     SAMPLE_SIZE_BYTES, HEADER_SIZE_BYTES, BATTERY_SIZE_BYTES, CSV_COLUMNS,
-    parse_sample, pack_server_config
+    BATTERY_COLUMN, parse_sample, pack_server_config
 )
 from telemetry.publisher import TelemetryPublisher
 from config.settings import (
@@ -42,8 +42,10 @@ from config.settings import (
     MQTT_ENABLED, MQTT_HOST, MQTT_PORT, MQTT_TOPIC_PREFIX, MQTT_CHUNK_SIZE,
 )
 
-# The battery the server appends to every row before queueing it (handle_client).
-BATTERY_COLUMN_INDEX = 8
+# Where the battery sits in every queued row. Derived from the CSV contract
+# rather than written as 8: the rows ARE the CSV rows, so if a column is ever
+# inserted the index follows instead of quietly reading a gyro reading as volts.
+BATTERY_COLUMN_INDEX = CSV_COLUMNS.index(BATTERY_COLUMN)
 from app_state import AppState, ConnectionEntry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

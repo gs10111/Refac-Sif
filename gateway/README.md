@@ -92,6 +92,11 @@ docker create --name tmp-gw thingsboard/tb-gateway
 docker cp tmp-gw:/thingsboard_gateway/config ./gw-config
 docker rm tmp-gw
 cp mqtt.json tb_gateway.json ./gw-config/
+
+# O docker cp preserva o dono da imagem. Se o diretório ficar de root e o
+# gateway rodar como outro usuário, ele sobe normalmente e só falha ao gravar
+# o cache de configuração — minutos depois, no log, sem parar o container.
+sudo chown -R "$(id -u):$(id -g)" ./gw-config
 ```
 
 **5. Subir.**
