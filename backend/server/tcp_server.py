@@ -35,15 +35,10 @@ from protocol.packet import (
     SAMPLE_SIZE_BYTES, HEADER_SIZE_BYTES, BATTERY_SIZE_BYTES, CSV_COLUMNS,
     parse_sample, pack_server_config
 )
-from telemetry.publisher import TelemetryPublisher
 from config.settings import (
     SERVER_IP, SERVER_PORT, GDRIVE_PATH,
     CLIENT_TIMEOUT_SEC, MAX_PAYLOAD_BYTES, BATTERY_INVALID,
-    MQTT_ENABLED, MQTT_HOST, MQTT_PORT, MQTT_TOPIC_PREFIX, MQTT_CHUNK_SIZE,
 )
-
-# The battery the server appends to every row before queueing it (handle_client).
-BATTERY_COLUMN_INDEX = 8
 from app_state import AppState, ConnectionEntry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -54,17 +49,11 @@ running    = True       # cleared by exit_monitor; stops the accept loop only �
 data_queue = queue.Queue()  # (ip, timestamp, samples) tuples consumed by save_data
 
 
-def save_data(publisher=None):
-    """Worker thread: writes received samples to CSV, copies to Google Drive, and
-    publishes the burst when a publisher was configured.
+def save_data():
+    """Worker thread: writes received samples to CSV and copies to Google Drive.
 
     Consumes tuples from data_queue. Stops when it receives None (sentinel).
     CSV filename: <ip>_<YYYYMMDD_HHMMSS>.csv
-
-    The publisher is an ADDITION to this path, never a gate in front of it: the
-    CSV is the record of last resort, so it is written first and no failure on
-    the MQTT side can cost the file — nor take this thread down, which would
-    silently stop every capture that comes after.
     """
     while True:
         item = data_queue.get()
@@ -96,18 +85,6 @@ def save_data(publisher=None):
                     logging.info(f"Copied {filename} to Google Drive")
                 except Exception as e:
                     logging.error(f"Failed to copy {filename} to Google Drive: {e}")
-
-            if publisher is not None and samples:
-                # The battery is constant across the burst and is already sitting
-                # in column 8 of every row (see handle_client), so it travels in
-                # the summary rather than on every sample.
-                battery_mv = samples[0][BATTERY_COLUMN_INDEX]
-                try:
-                    reason = publisher.publish(ip, samples, battery_mv, timestamp)
-                    if reason:
-                        logging.warning(f"Burst from {ip} not published: {reason}")
-                except Exception as e:
-                    logging.error(f"Publishing the burst from {ip} failed: {e}")
         finally:
             data_queue.task_done()
 
@@ -301,29 +278,15 @@ def exit_monitor():
 if __name__ == '__main__':
     from web.server import web_server_main
 
-    # Built here rather than inside save_data so that a missing paho, or a broker
-    # address that cannot be resolved, is a startup failure the operator sees —
-    # not a warning buried in the log of a worker thread hours later.
-    publisher = None
-    if MQTT_ENABLED:
-        publisher = TelemetryPublisher(
-            host=MQTT_HOST, port=MQTT_PORT,
-            topic_prefix=MQTT_TOPIC_PREFIX, chunk_size=MQTT_CHUNK_SIZE,
-        )
-        logging.info(f"Publishing bursts to {MQTT_HOST}:{MQTT_PORT} "
-                     f"under '{MQTT_TOPIC_PREFIX}/'")
-
     state = AppState()
     threads = [
         threading.Thread(target=server_main,     args=(state,)),
         threading.Thread(target=web_server_main, args=(state,)),
         threading.Thread(target=exit_monitor),
-        threading.Thread(target=save_data,       args=(publisher,)),
+        threading.Thread(target=save_data),
     ]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
-    if publisher is not None:
-        publisher.close()
     print("Server stopped.")
