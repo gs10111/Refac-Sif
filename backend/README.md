@@ -42,6 +42,10 @@ O servidor sobe duas portas:
 | `12345` | TCP | Recebe dados do ESP32 |
 | `8080`  | HTTP | Interface web de configuração |
 
+Ambas vêm do ambiente: `SERVER_PORT` e `WEB_PORT` (os valores acima são os
+padrões). Um valor que não seja inteiro derruba o servidor no boot, em vez de
+voltar em silêncio para o padrão.
+
 Para parar: digite `q` + Enter no terminal.
 
 ---

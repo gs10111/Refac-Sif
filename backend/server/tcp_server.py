@@ -15,7 +15,8 @@ Protocol (per connection):
 
 Threads (started from __main__):
   server_main      — accepts TCP connections, dispatches handle_client via thread pool
-  web_server_main  — Flask UI on port 8080 (config editing + connection history)
+  web_server_main  — Flask UI on WEB_PORT, 8080 by default (config editing +
+                     connection history)
   save_data        — consumes data_queue, writes CSV, copies to Google Drive
   exit_monitor     — waits for 'q' on stdin to stop the server
 """
