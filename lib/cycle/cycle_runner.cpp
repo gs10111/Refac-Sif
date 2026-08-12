@@ -117,14 +117,11 @@ CycleOutcome CycleRunner::runIteration(const NetworkConfig &network, ServerConfi
                          _store.getUShort(SAMPLING_CODE_NVS_KEY, DEFAULT_SAMPLING_CODE))
                 {
                     _store.putUShort(SAMPLING_CODE_NVS_KEY, received.sampling_code);
-                    // Said out loud, and said completely: the write is only half
-                    // the story. D1 keeps the device awake between acquisitions,
-                    // so the rate reaches the sensor at the next BOOT — after a
-                    // reset, or after the deep sleep that follows max_acq. An
-                    // operator who changes the rate on the page and watches the
-                    // next capture would otherwise conclude it was ignored.
+                    // Written to NVS so it survives the deep sleep, and applied by
+                    // AcquisitionService on the very next acquisition — the
+                    // operator does not wait for a boot to see the change.
                     SIF_LOGF("Nova taxa gravada: codigo ODR %u. "
-                             "Passa a valer no proximo boot (reset ou apos o deep sleep).\n",
+                             "Vale a partir da proxima aquisicao.\n",
                              (unsigned)received.sampling_code);
                 }
                 else

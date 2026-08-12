@@ -294,7 +294,7 @@ they stop being so:
 
 - `runCycleIteration` reaches `_power.enterAcquisitionMode()` on every path
   (`app.cpp`, one unconditional call outside every branch — this is R7's shape).
-- `App::begin` calls `_imu.wake()` exactly once per boot rather than per acquisition.
+- `App::begin` calls `_imu.wake()` exactly once per boot. `AcquisitionService` wakes it again only when the sampling rate changes, which is the one moment the ODR nibble can be written.
 
 ## Why a red stub round is not coverage
 

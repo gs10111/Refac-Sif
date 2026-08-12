@@ -14,10 +14,32 @@ void AcquisitionService::setConfig(const ServerConfig &config)
     _config = config;
 }
 
+void AcquisitionService::markSamplingApplied(uint16_t code)
+{
+    _appliedSamplingCode = code;
+}
+
 void AcquisitionService::beginAcquisition(uint32_t nowMs)
 {
     _startMs = nowMs;
     _attempts++;
+
+    // A rate that arrived from the server mid-cycle takes effect HERE, on the
+    // acquisition that follows it, instead of waiting for the next boot. D1 keeps
+    // the device awake between acquisitions, so "next boot" could be four hours
+    // away — an operator changing the rate on the page watched capture after
+    // capture at the old one.
+    //
+    // Only on a change: the ODR nibble is written while the part comes out of OFF,
+    // so applying it means waking the IMU, and waking costs the gyroscope its
+    // settle time. Every capture answers with a rate; re-waking on each would
+    // spend that time forever for nothing.
+    if (_config.sampling_code != _appliedSamplingCode)
+    {
+        _imu.setSamplingCode((uint8_t)_config.sampling_code);
+        _imu.wake();
+        _appliedSamplingCode = _config.sampling_code;
+    }
 
     // Deliberately does NOT wake the IMU or clear the ring.
     //

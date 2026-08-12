@@ -105,6 +105,12 @@ void App::begin()
 
     _imu.wake(); // once per boot, as main.cpp:114 does — not per acquisition
 
+    // The service was built with the defaults, before NVS was read. Telling it
+    // what actually went into the part is what keeps the first acquisition from
+    // waking a sensor that is already at the right rate.
+    _acq->setConfig(serverConfig);
+    _acq->markSamplingApplied(serverConfig.sampling_code);
+
     // Starts the initial cooldown, which is what keeps the magnet that caused the
     // ext0 wake from ending the first acquisition on its first poll.
     _trigger.begin(millis(), serverConfig.trigger_cooldown_sec);
