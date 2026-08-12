@@ -17,7 +17,18 @@ bool TcpClient::open(const char *host, uint16_t port)
 
 uint32_t TcpClient::write(const uint8_t *data, uint32_t len)
 {
-    return (uint32_t)_client.write(data, len);
+    const uint32_t accepted = (uint32_t)_client.write(data, len);
+
+    // A short write is not an error the caller can see — it just loops — but it
+    // is the difference between "the link is stalling" and "the socket died",
+    // and neither was visible from outside.
+    if (accepted < len)
+    {
+        Serial.printf("Escrita curta: %u de %u bytes (socket %s)\n",
+                      (unsigned)accepted, (unsigned)len,
+                      _client.connected() ? "vivo" : "morto");
+    }
+    return accepted;
 }
 
 uint32_t TcpClient::readExact(uint8_t *out, uint32_t len, uint32_t timeoutMs)
@@ -47,5 +58,10 @@ uint32_t TcpClient::readExact(uint8_t *out, uint32_t len, uint32_t timeoutMs)
 
 void TcpClient::close()
 {
+    // Said out loud because a socket already dead here means the peer hung up
+    // before we finished — which looks, from the server, like a device that
+    // connected and sent nothing.
+    if (!_client.connected())
+        Serial.println("Socket ja estava fechado antes do stop().");
     _client.stop();
 }
