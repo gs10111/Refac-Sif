@@ -11,6 +11,15 @@ AcquisitionService::AcquisitionService(IImu &imu, RingBuffer &ring)
 
 void AcquisitionService::setConfig(const ServerConfig &config)
 {
+    // The first config of a boot describes what the sensor is ALREADY running:
+    // App::begin read it from NVS, handed it to the IMU and woke the part. Marking
+    // it as applied here is what keeps the first acquisition from waking a radio
+    // and a gyroscope that are already at the right rate.
+    if (!_samplingApplied)
+    {
+        _appliedSamplingCode = config.sampling_code;
+        _samplingApplied = true;
+    }
     _config = config;
 }
 
@@ -18,6 +27,23 @@ void AcquisitionService::beginAcquisition(uint32_t nowMs)
 {
     _startMs = nowMs;
     _attempts++;
+
+    // A rate that arrived from the server mid-cycle takes effect HERE, on the
+    // acquisition that follows it, instead of waiting for the next boot. D1 keeps
+    // the device awake between acquisitions, so "next boot" could be four hours
+    // away — an operator changing the rate on the page watched capture after
+    // capture at the old one.
+    //
+    // Only on a change: the ODR nibble is written while the part comes out of OFF,
+    // so applying it means waking the IMU, and waking costs the gyroscope its
+    // settle time. Every capture answers with a rate; re-waking on each would
+    // spend that time forever for nothing.
+    if (_config.sampling_code != _appliedSamplingCode)
+    {
+        _imu.setSamplingCode((uint8_t)_config.sampling_code);
+        _imu.wake();
+        _appliedSamplingCode = _config.sampling_code;
+    }
 
     // Deliberately does NOT wake the IMU or clear the ring.
     //

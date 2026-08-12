@@ -327,6 +327,86 @@ static void test_begin_acquisition_never_wakes_the_imu(void)
     TEST_ASSERT_EQUAL_UINT32(0, imu.sleepCalls());
 }
 
+// ---------------------------------------------------------------------------
+// The rate takes effect on the next acquisition, without waiting for a boot
+// ---------------------------------------------------------------------------
+
+// D1 keeps the device awake between acquisitions, so a rate stored in NVS used to
+// reach the sensor only at the next boot — after a reset, or after the deep sleep
+// that follows max_acq. An operator who changed 100 to 200 Hz on the page watched
+// four more captures at 100 Hz with nothing wrong and nothing to read.
+
+static void test_the_rate_in_force_at_boot_is_not_reapplied(void)
+{
+    // App::begin already woke the IMU with the rate it read from NVS. Waking it
+    // again here would cost the gyroscope settle time for no change at all.
+    FakeImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    ServerConfig config = default_server_config();
+    acq.setConfig(config);
+
+    acq.beginAcquisition(0);
+
+    TEST_ASSERT_EQUAL_UINT32(0, imu.wakeCalls());
+}
+
+static void test_a_new_rate_reaches_the_sensor_on_the_next_acquisition(void)
+{
+    FakeImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    ServerConfig config = default_server_config();
+    acq.setConfig(config);
+    acq.beginAcquisition(0);
+
+    config.sampling_code = SAMPLING_CODE_200HZ;   // the server answered mid-cycle
+    acq.setConfig(config);
+    acq.beginAcquisition(1000);
+
+    TEST_ASSERT_EQUAL_UINT8(SAMPLING_CODE_200HZ, imu.samplingCode());
+    // Woken once, because the registers are written while the part comes out of
+    // OFF — that is the only moment the ODR nibble takes.
+    TEST_ASSERT_EQUAL_UINT32(1, imu.wakeCalls());
+}
+
+static void test_the_same_rate_arriving_again_costs_nothing(void)
+{
+    // Every capture answers with a rate. Re-waking on each would spend the
+    // gyroscope settle time per acquisition, forever, for no change.
+    FakeImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    ServerConfig config = default_server_config();
+    config.sampling_code = SAMPLING_CODE_200HZ;
+    acq.setConfig(config);
+    acq.beginAcquisition(0);
+    const uint32_t after_first = imu.wakeCalls();
+
+    acq.setConfig(config);
+    acq.beginAcquisition(1000);
+    acq.setConfig(config);
+    acq.beginAcquisition(2000);
+
+    TEST_ASSERT_EQUAL_UINT32(after_first, imu.wakeCalls());
+}
+
+static void test_changing_another_field_does_not_re_rate_the_sensor(void)
+{
+    FakeImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    ServerConfig config = default_server_config();
+    acq.setConfig(config);
+    acq.beginAcquisition(0);
+
+    config.sleep_time_min = 99;                   // duty cycle changed, rate did not
+    acq.setConfig(config);
+    acq.beginAcquisition(1000);
+
+    TEST_ASSERT_EQUAL_UINT32(0, imu.wakeCalls());
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
@@ -341,6 +421,10 @@ static int run_all(void)
     RUN_TEST(test_not_ready_samples_are_not_stored);
     RUN_TEST(test_stored_frame_is_18_bytes_in_wire_order);
     RUN_TEST(test_frame_timestamp_is_the_one_passed_to_step);
+    RUN_TEST(test_the_rate_in_force_at_boot_is_not_reapplied);
+    RUN_TEST(test_a_new_rate_reaches_the_sensor_on_the_next_acquisition);
+    RUN_TEST(test_the_same_rate_arriving_again_costs_nothing);
+    RUN_TEST(test_changing_another_field_does_not_re_rate_the_sensor);
     return UNITY_END();
 }
 

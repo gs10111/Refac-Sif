@@ -30,8 +30,8 @@ public:
 
     void setConfig(const ServerConfig &config);
 
-    // Starts one acquisition and counts it. Does not wake the IMU and does not
-    // clear the ring — see the body for why.
+    // Starts one acquisition and counts it. Wakes the IMU only when the rate has
+    // changed since the last one — see the body. Does not clear the ring.
     void beginAcquisition(uint32_t nowMs);
 
     AcquisitionResult step(uint32_t nowMs, TriggerEvent trigger);
@@ -49,6 +49,8 @@ public:
     uint32_t bytesCollected() const;
 
 private:
+    uint16_t _appliedSamplingCode = 0;  // what the IMU is actually running
+    bool     _samplingApplied = false;  // the boot config has been seen
     IImu &_imu;
     RingBuffer &_ring;
     ServerConfig _config;
