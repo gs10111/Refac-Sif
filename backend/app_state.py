@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from config.settings import (
     DEFAULT_SLEEP_MIN, DEFAULT_IDLE_MIN,
     DEFAULT_MAX_ACQ, DEFAULT_COOLDOWN_SEC, DEFAULT_UPDATE,
-    HISTORY_MAX_CONNECTIONS, SAMPLING_CODE,
+    HISTORY_MAX_CONNECTIONS, INCIDENTS_MAX, SAMPLING_CODE,
 )
 from store import config_store
 
@@ -22,6 +22,20 @@ class DeviceConfig:
     # web form: the rate is a fleet-wide decision taken at deploy time, and a
     # form field would let one careless save re-rate every sensor in the plant.
     sampling_code: int = SAMPLING_CODE
+
+
+# The levels the page knows how to paint. INFO is the server saying it is
+# working: mixed in, it would bury the three lines that matter under a hundred
+# that do not.
+INCIDENT_LEVELS = ('WARNING', 'ERROR', 'CRITICAL')
+
+
+@dataclass
+class IncidentEntry:
+    """One failure, as the operator needs to read it."""
+    timestamp: datetime.datetime
+    level:     str
+    message:   str
 
 
 @dataclass
@@ -55,8 +69,16 @@ class AppState:
         self.db_path:     str | None             = db_path
         self._config:     DeviceConfig           = DeviceConfig()
         self.connections: deque[ConnectionEntry] = deque(maxlen=HISTORY_MAX_CONNECTIONS)
+        # Failures, newest last. In memory like the history: a restart clears it,
+        # and the README says so rather than implying an audit trail.
+        self.incidents:   deque[IncidentEntry]   = deque(maxlen=INCIDENTS_MAX)
         self.ota_armed:   bool                   = bool(DEFAULT_UPDATE)
-        self.lock:        threading.Lock         = threading.Lock()
+        # Reentrant: the incident log records from whichever thread hit the
+        # failure, and a failure logged from inside a section that already holds
+        # this lock would deadlock the server on a plain Lock. No path does that
+        # today; the point is that adding one must not be a way to hang the
+        # acquisition.
+        self.lock:        threading.RLock        = threading.RLock()
 
     @property
     def config(self) -> DeviceConfig:
@@ -84,6 +106,31 @@ class AppState:
         with self.lock:
             for field, value in fields.items():
                 setattr(self._config, field, value)
+
+    def record_incident(self, level: str, message: str,
+                        when: datetime.datetime | None = None) -> None:
+        """Add a failure to the log the page shows.
+
+        Called from the logging handler, which runs on whichever thread hit the
+        failure — hence the lock.
+        """
+        entry = IncidentEntry(
+            timestamp=when or datetime.datetime.now(),
+            level=level,
+            message=message,
+        )
+        with self.lock:
+            self.incidents.append(entry)
+
+    def recent_incidents(self, limit: int | None = None) -> list[IncidentEntry]:
+        """The most recent failures, newest first.
+
+        Newest first because the operator opens the page to find out what is
+        wrong NOW; the oldest line of a long night is the least useful one.
+        """
+        with self.lock:
+            newest_first = list(reversed(self.incidents))
+        return newest_first if limit is None else newest_first[:limit]
 
     def set_ota_armed(self, armed: bool) -> None:
         """Arm or disarm the one-shot OTA flag (POST /ota)."""

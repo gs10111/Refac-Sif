@@ -9,6 +9,7 @@ from app_state import AppState
 # Imported as a module, not `from config.settings import WEB_PORT`: read at call
 # time the setting can be replaced in a test without reloading every importer.
 from config import settings
+from config.settings import INCIDENTS_SHOWN
 from protocol.packet import (
     SAMPLING_CODES, UINT16_MAX, sampling_code_from_hz, sampling_hz_from_code,
 )
@@ -48,7 +49,7 @@ def validate_config_form(form) -> tuple[dict, list]:
     return values, errors
 
 
-def _storage_unavailable(error: sqlite3.OperationalError) -> Response:
+def _storage_unavailable(state: AppState, error: sqlite3.OperationalError) -> Response:
     """Answer a write that the database refused.
 
     Disk full, file turned read-only, lock held past the timeout: none of it
@@ -57,12 +58,13 @@ def _storage_unavailable(error: sqlite3.OperationalError) -> Response:
     operator chasing the wrong thing, so the reason is said out loud, and the
     status says try again rather than "you sent something wrong".
     """
-    return Response(
-        f'Nao foi possivel salvar a configuracao: {error}. '
-        f'A configuracao anterior continua valendo e os sensores seguem '
-        f'transmitindo com ela.',
-        status=503, mimetype='text/plain',
-    )
+    message = (f'Nao foi possivel salvar a configuracao: {error}. '
+               f'A configuracao anterior continua valendo e os sensores seguem '
+               f'transmitindo com ela.')
+    # Also recorded, not only answered: the 503 is seen by whoever clicked, and
+    # only once. The next person to open the page has the incident to go on.
+    state.record_incident('ERROR', message)
+    return Response(message, status=503, mimetype='text/plain')
 
 
 def create_app(state: AppState) -> Flask:
@@ -74,6 +76,7 @@ def create_app(state: AppState) -> Flask:
             config      = dataclasses.replace(state.config)
             connections = list(state.connections)
             ota_armed   = state.ota_armed
+        incidents = state.recent_incidents(INCIDENTS_SHOWN)
         # Which device took the flag last, derived from the history already
         # copied — no new state. It does NOT say whether that device came back:
         # the only key we have is a DHCP address, so a device returning on a new
@@ -86,6 +89,7 @@ def create_app(state: AppState) -> Flask:
             ota_armed=ota_armed, last_ota=last_ota,
             sampling_hz=sampling_hz_from_code(config.sampling_code),
             sampling_options=list(SAMPLING_CODES),
+            incidents=incidents,
         ))
         # The page is the operator's only instrument: a cached render showing
         # a stale arming state is worse than no page at all.
@@ -132,7 +136,7 @@ def create_app(state: AppState) -> Flask:
         try:
             state.update_config(sampling_code=code)
         except sqlite3.OperationalError as unavailable:
-            return _storage_unavailable(unavailable)
+            return _storage_unavailable(state, unavailable)
         return redirect('/', 303)
 
     @app.route('/config', methods=['POST'])
@@ -151,7 +155,7 @@ def create_app(state: AppState) -> Flask:
                 max_acq=values['max_acq'], cooldown_sec=values['cooldown_sec'],
             )
         except sqlite3.OperationalError as unavailable:
-            return _storage_unavailable(unavailable)
+            return _storage_unavailable(state, unavailable)
 
         return redirect('/', 303)
 

@@ -118,13 +118,31 @@ O bloco **Taxa de amostragem**, logo abaixo, mostra em que taxa a frota está e 
 
 O bloco **Atualizacao OTA**, mais abaixo, também é independente do SALVAR: salvar a configuração nunca arma nem desarma o OTA. Ver a seção adiante.
 
+**Painel esquerdo — Ocorrencias**
+
+Lista as últimas 20 falhas que o servidor encontrou, mais recente primeiro:
+config que não chegou ao device, captura recusada pelo publisher, CSV que não
+gravou, cópia para o Drive que falhou, timeout de sensor, erro ao salvar a
+configuração. Vermelho é erro, âmbar é aviso. Servidor sem falha nenhuma diz
+`Nenhuma ocorrencia registrada desde que o servidor subiu`, em vez de mostrar
+uma área vazia que parece painel quebrado.
+
+Antes disso tudo isso ia só para o terminal do servidor: a página parecia
+saudável enquanto capturas eram recusadas. As ocorrências ficam **em memória**
+(as últimas 200) — restart limpa, e não substituem o log do serviço.
+
+> **Atenção:** as mensagens trazem IP do device, nome de arquivo e o texto do
+> erro, e a página **não tem autenticação** — quem alcança a rede do servidor lê
+> tudo isso. Não é informação nova (a tabela de conexões já mostra os IPs), mas
+> agora inclui texto de exceção. Mesmo risco da seção de OTA.
+
 **Painel direito — Últimas Conexões**
 
 Exibe as últimas 500 conexões dos dispositivos: IP, horário, número de amostras, tensão da bateria e se aquela conexão levou o comando de OTA.
 
 A linha que levou o OTA fica destacada (fundo avermelhado, borda à esquerda) e recebe o selo **OTA**. É o único registro de qual sensor está prestes a reiniciar em modo Access Point — vale anotar o IP antes de sair da mesa.
 
-> **O que sobrevive a um restart:** a **configuração** (os quatro campos e a taxa) fica em SQLite e volta igual. O **histórico de conexões** e o **armamento do OTA** continuam em memória — reiniciou, histórico vazio e OTA desarmado.
+> **O que sobrevive a um restart:** a **configuração** (os quatro campos e a taxa) fica em SQLite e volta igual. O **histórico de conexões**, as **ocorrências** e o **armamento do OTA** continuam em memória — reiniciou, histórico e ocorrências vazios, OTA desarmado.
 
 ---
 
@@ -180,7 +198,7 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-224 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
+239 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
 
 ---
 

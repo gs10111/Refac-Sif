@@ -78,9 +78,16 @@ def test_connections_drop_the_oldest_first():
     assert state.connections[-1].n_samples == 509
 
 
-def test_lock_is_threading_lock():
+def test_lock_is_reentrant():
+    """A plain Lock became an RLock when the incident log started recording from
+    whichever thread hit the failure: a failure logged from inside a section that
+    already holds this lock would otherwise hang the acquisition."""
     state = AppState()
-    assert isinstance(state.lock, type(threading.Lock()))
+
+    assert isinstance(state.lock, type(threading.RLock()))
+    with state.lock:
+        with state.lock:            # a plain Lock deadlocks here
+            pass
 
 
 # --------------------------------------------------------------------------
