@@ -13,7 +13,7 @@
 1. **`git fetch` e branch a partir da `main`.** A base se move enquanto se trabalha.
 2. **TDD, com o vermelho observado.** Teste antes da implementação, provando o critério de aceite da
    spec — não algo parecido.
-   - Firmware: `~/.platformio/penv/bin/pio test -e native`
+   - Firmware: `~/.platformio/penv/bin/pio test -e native` (91 casos)
    - Backend: `backend/venv/bin/python -m pytest -q` (239 testes, ~2 s)
    - Gateway: `backend/venv/bin/python -m pytest gateway -q` (11 testes; rodam sem broker e sem o thingsboard-gateway instalado)
    - Prova de que o teste **detecta**, não só passa: `pio test -e mutant_<nome>` — ali a **falha é a
