@@ -1,6 +1,7 @@
 #include "uploader.h"
 
 #include "log.h"
+#include "throughput.h"
 
 // Production fragments the payload at 990 bytes (main.cpp:15, :237) and aborts the
 // loop when a write is refused (:248-251).
@@ -9,7 +10,8 @@
 // Production waits 2 s for the response (main.cpp:274).
 #define CONFIG_RESPONSE_TIMEOUT_MS 2000
 
-static bool write_all(ITransport &transport, const uint8_t *data, uint32_t len)
+static bool write_all(ITransport &transport, const uint8_t *data, uint32_t len,
+                      uint32_t *acceptedTotal = nullptr)
 {
     uint32_t sent = 0;
     while (sent < len)
@@ -26,6 +28,8 @@ static bool write_all(ITransport &transport, const uint8_t *data, uint32_t len)
         }
 
         sent += accepted;
+        if (acceptedTotal != nullptr)
+            *acceptedTotal += accepted;
     }
     return true;
 }
@@ -69,13 +73,19 @@ UploadOutcome upload_acquisition(ITransport &transport,
     ReadPlan plan = ring.plan();
     const uint32_t total = plan.totalBytes();
 
+    // Counted and timed apart from everything else. The old number lumped the
+    // connect and the two-second wait for the reply into one span, so a 159 ms
+    // transmission printed as 16.82 kbps and read as a slow link.
+    uint32_t accepted = 0;
+    SIF_TIMER(writeStart);
+
     uint8_t header[HEADER_SIZE_BYTES];
     header[0] = (uint8_t)(total & 0xFF);
     header[1] = (uint8_t)((total >> 8) & 0xFF);
     header[2] = (uint8_t)((total >> 16) & 0xFF);
     header[3] = (uint8_t)((total >> 24) & 0xFF);
 
-    bool ok = write_all(transport, header, HEADER_SIZE_BYTES);
+    bool ok = write_all(transport, header, HEADER_SIZE_BYTES, &accepted);
 
 #ifdef MUTANT_SEND_FROM_INDEX_ZERO
     // ==== MUTATION: MUTANT_SEND_FROM_INDEX_ZERO ====
@@ -97,9 +107,9 @@ UploadOutcome upload_acquisition(ITransport &transport,
     // Oldest first: from tail to the end of the storage, then the frames that
     // overwrote the front (main.cpp:240 does the same with a modulo).
     if (ok && plan.first.len > 0)
-        ok = write_all(transport, plan.first.ptr, plan.first.len);
+        ok = write_all(transport, plan.first.ptr, plan.first.len, &accepted);
     if (ok && plan.second.len > 0)
-        ok = write_all(transport, plan.second.ptr, plan.second.len);
+        ok = write_all(transport, plan.second.ptr, plan.second.len, &accepted);
 #endif
 
     if (!ok)
@@ -135,7 +145,9 @@ UploadOutcome upload_acquisition(ITransport &transport,
     batteryBytes[0] = (uint8_t)(batteryMv & 0xFF);
     batteryBytes[1] = (uint8_t)((batteryMv >> 8) & 0xFF);
 
-    outcome.fullyWritten = ok && write_all(transport, batteryBytes, BATTERY_SIZE_BYTES);
+    outcome.fullyWritten = ok && write_all(transport, batteryBytes,
+                                           BATTERY_SIZE_BYTES, &accepted);
+    const uint32_t writeMs = SIF_ELAPSED(writeStart);
 
     // Unconditional, and that is production: the reset at main.cpp:264-265 sits
     // after the send loop, so a write that broke out at :248 still reaches it. A
@@ -148,9 +160,20 @@ UploadOutcome upload_acquisition(ITransport &transport,
         return outcome;
     }
 
+#ifdef ARDUINO
+    // What the socket ACCEPTED, not what we meant to send. A device that
+    // believes it transmitted and a server that received nothing disagree
+    // somewhere, and this is the last number on our side of the disagreement.
+    SIF_LOGF("Escrita: %u de %u bytes aceitos em %u ms (%.2f kbps)\n",
+             (unsigned)accepted, (unsigned)(total + HEADER_SIZE_BYTES + BATTERY_SIZE_BYTES),
+             (unsigned)writeMs, kbps_from(accepted, writeMs));
+#endif
+
     uint8_t response[SERVER_CONFIG_WIRE_BYTES] = {0};
+    SIF_TIMER(waitStart);
     const uint32_t received =
         transport.readExact(response, SERVER_CONFIG_WIRE_BYTES, CONFIG_RESPONSE_TIMEOUT_MS);
+    const uint32_t waitMs = SIF_ELAPSED(waitStart);
 
     // main.cpp:268-270. Production times this from the WiFi begin; ours starts at
     // the connection open, because the connect happens in WiFiManager. Same shape,
@@ -158,11 +181,12 @@ UploadOutcome upload_acquisition(ITransport &transport,
     SIF_LOG("Tempo de Conexão + Transmissão");
     SIF_LOG(SIF_ELAPSED(uploadStart));
 #ifdef ARDUINO
-    {
-        const uint32_t ms = SIF_ELAPSED(uploadStart);
-        const float kbps = ms ? ((total + BATTERY_SIZE_BYTES) * 8.0f) / (float)ms : 0.0f;
-        SIF_LOGF("Transmissão concluída com throughput de %.2f kbps\n", kbps);
-    }
+    // Spans stated separately, because the single number could not tell a slow
+    // link from a server that never answered — and it was read as the first.
+    SIF_LOGF("Transmissão concluída: %u ms de escrita, %u ms de espera, "
+             "%u de %u bytes de resposta\n",
+             (unsigned)writeMs, (unsigned)waitMs,
+             (unsigned)received, (unsigned)SERVER_CONFIG_WIRE_BYTES);
 #endif
 
     // Through the decoder, not straight into the struct: a short frame must leave

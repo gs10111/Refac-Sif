@@ -140,7 +140,14 @@ def recv_exact(conn, n: int) -> bytes:
     chunks    = []
     remaining = n
     while remaining > 0:
-        chunk = conn.recv(remaining)
+        try:
+            chunk = conn.recv(remaining)
+        except socket.timeout:
+            # How far it got is the whole diagnostic: 0 of 4 is a device that
+            # never spoke, 4530 of 4536 is a link that dropped at the end, and
+            # the two need different fixes. The bare timeout said neither.
+            raise socket.timeout(
+                f'timeout apos {n - remaining}/{n} bytes') from None
         if not chunk:
             raise ConnectionError(f'peer closed after {n - remaining}/{n} bytes')
         chunks.append(chunk)
@@ -170,13 +177,27 @@ def handle_client(conn, addr, state: AppState):
         # First 4 bytes: total number of sample bytes the device will send.
         # The header alone decides where the payload ends — counting bytes as
         # they arrive is what used to let the battery count as sample data.
-        expected = int.from_bytes(recv_exact(conn, HEADER_SIZE_BYTES), byteorder='little')
+        try:
+            expected = int.from_bytes(
+                recv_exact(conn, HEADER_SIZE_BYTES), byteorder='little')
+        except (ConnectionError, socket.timeout) as incomplete:
+            # A device that connects and says nothing at all. Named separately
+            # from a payload that stops halfway, because it points somewhere
+            # else entirely: the device believes it wrote and the bytes never
+            # left it.
+            logging.warning(
+                f'Nenhum cabecalho de {addr[0]}: {incomplete}. '
+                f'A conexao abriu e nada chegou.')
+            raise
         if expected > MAX_PAYLOAD_BYTES:
             raise ValueError(f"refusing {expected}-byte payload from {addr[0]}")
 
         try:
             payload = recv_exact(conn, expected)
-        except (ConnectionError, socket.timeout):
+        except (ConnectionError, socket.timeout) as incomplete:
+            logging.warning(
+                f'Payload incompleto de {addr[0]}: {incomplete}. '
+                f'O cabecalho prometia {expected} bytes.')
             # The device promised `expected` bytes and did not deliver them — and it
             # has already cleared its ring, because production clears once the
             # connection opened whatever the write did. The acquisition is gone on

@@ -34,6 +34,11 @@ bool WiFiManager::connect(const char *ssid, const char *password, uint32_t timeo
 
     Serial.print("\n");                    // main.cpp:198
     Serial.println("Conectado ao Wi-Fi.");  // main.cpp:199
+    // The radio is pinned to MCS7 (esp_wifi_config_80211_tx_rate above, as
+    // production does at main.cpp:216), so a weak link loses data frames while
+    // the handshake still gets through. Below roughly -75 dBm that is the first
+    // thing to suspect when bytes leave the device and never arrive.
+    Serial.printf("RSSI %d dBm, IP %s\n", WiFi.RSSI(), WiFi.localIP().toString().c_str());
     Serial.println("Tempo de Conexão");     // main.cpp:200
     Serial.println(millis() - start);       // main.cpp:201
     return true;
