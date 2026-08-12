@@ -43,6 +43,7 @@ from config.settings import (
     DB_PATH,
 )
 from store.config_store import init_db
+from observability.incident_log import install_incident_log
 
 # Where the battery sits in every queued row. Derived from the CSV contract
 # rather than written as 8: the rows ARE the CSV rows, so if a column is ever
@@ -323,6 +324,11 @@ if __name__ == '__main__':
     logging.info(f"Configuration stored in {DB_PATH}")
 
     state = AppState(db_path=DB_PATH)
+    # From here on every warning and error the server logs also reaches the page.
+    # Installed before the threads start, so a failure during startup of any of
+    # them is already visible to whoever opens the browser.
+    install_incident_log(state)
+
     threads = [
         threading.Thread(target=server_main,     args=(state,)),
         threading.Thread(target=web_server_main, args=(state,)),

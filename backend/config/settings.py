@@ -68,6 +68,15 @@ if MQTT_ENABLED and not MQTT_HOST:
         'sem broker nao ha para onde publicar.'
     )
 
+# Failures kept for the page. Two hundred covers a bad night of one sensor in a
+# reconnect loop without letting a broken device exhaust memory — the log is
+# bounded for the same reason the connection history is.
+INCIDENTS_MAX = 200
+
+# How many of them the page shows. The rest stay in the ring: a panel that
+# scrolls past twenty lines stops being read at all.
+INCIDENTS_SHOWN = 20
+
 DEFAULT_SLEEP_MIN      = 240
 DEFAULT_IDLE_MIN       =  20
 DEFAULT_MAX_ACQ        =   5
