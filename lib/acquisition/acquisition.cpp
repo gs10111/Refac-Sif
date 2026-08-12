@@ -23,6 +23,7 @@ void AcquisitionService::beginAcquisition(uint32_t nowMs)
 {
     _startMs = nowMs;
     _attempts++;
+    _framesStored = 0;
 
     // A rate that arrived from the server mid-cycle takes effect HERE, on the
     // acquisition that follows it, instead of waiting for the next boot. D1 keeps
@@ -85,9 +86,15 @@ AcquisitionResult AcquisitionService::step(uint32_t nowMs, TriggerEvent trigger)
     //         the fake ready, so the mutation is invisible to them.
     (void)status;
     _ring.append(frame);
+    _framesStored++;
 #else
     if (status == IMU_OK)
+    {
         _ring.append(frame);
+        // Counted here, next to the store: what the measured rate divides is the
+        // frames the sensor actually gave, not the polls the loop made.
+        _framesStored++;
+    }
 #endif
 
     // Production checks the idle timeout after the sampling block (:436) with a
@@ -117,6 +124,11 @@ AcquisitionResult AcquisitionService::step(uint32_t nowMs, TriggerEvent trigger)
         return ACQ_STOPPED_BY_IDLE;
 
     return ACQ_RUNNING;
+}
+
+uint32_t AcquisitionService::framesStored() const
+{
+    return _framesStored;
 }
 
 uint16_t AcquisitionService::acquisitionsAttempted() const

@@ -43,9 +43,12 @@ CycleOutcome CycleRunner::runIteration(const NetworkConfig &network, ServerConfi
     } while (result == ACQ_RUNNING);
 
     // What the sensor ACHIEVED, not what it was told to run: frames actually
-    // stored over the span they were stored in. The server has never had this.
+    // taken over the span they were taken in. Counted by the service, NOT read
+    // from the ring's occupancy — a capture that outruns the buffer would then
+    // report a rate as low as the buffer is small (200 Hz for ten minutes reads
+    // as 100).
     const uint16_t achievedHz = effective_hz(
-        _ring.bytesStored() / SAMPLE_SIZE_BYTES, lastNow - acquisitionStartMs);
+        _acq.framesStored(), lastNow - acquisitionStartMs);
 
     SIF_LOG(SIF_ELAPSED(acquisitionStart)); // main.cpp:180, elapsed ms
 
