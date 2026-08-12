@@ -15,7 +15,23 @@ bool WiFiManager::connect(const char *ssid, const char *password, uint32_t timeo
     WiFi.begin(ssid, password);
     esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
     esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N);
-    esp_wifi_config_80211_tx_rate(WIFI_IF_STA, WIFI_PHY_RATE_MCS7_LGI);
+    // Production pins the radio to MCS7 (main.cpp:216), the top 802.11n rate:
+    // 65 Mbps in HT20, which needs roughly -64 dBm to close. On the bench of
+    // 2026-08-12 the sensor sat at -81 dBm, seventeen decibels short, and the
+    // failure had exactly the shape that predicts: association and SYN went out
+    // at the basic rates (1-6 Mbps, good to about -85 dBm) and completed, while
+    // 4538 bytes of payload were accepted by the socket and never reached the
+    // server. The next cycle could not even connect: errno 104, RST.
+    //
+    // Leaving the call out hands the choice back to the ESP32's rate control,
+    // which drops to MCS0/1 on a weak link — slower per frame, and a capture is
+    // 4.5 KB, so the cost is milliseconds.
+    //
+    // DEVIATION FROM PRODUCTION, deliberate: production runs where the signal is
+    // good and never met this. If a fixed rate is wanted back, one line does it:
+    //     esp_wifi_config_80211_tx_rate(WIFI_IF_STA, WIFI_PHY_RATE_MCS0_LGI);
+    // MCS0 is 6.5 Mbps and closes at about -82 dBm, still deterministic, still
+    // far more than a capture needs.
     uint32_t start = millis();
     while (WiFi.status() != WL_CONNECTED) {
         if ((millis() - start) > timeoutMs) {
