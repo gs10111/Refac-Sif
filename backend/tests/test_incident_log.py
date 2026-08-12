@@ -7,6 +7,7 @@ while the terminal nobody is watching fills with errors.
 Every warning and error the server already logs is captured; nothing had to be
 instrumented twice. The log lives in memory, like the connection history.
 """
+import datetime
 import logging
 
 import pytest
@@ -20,8 +21,13 @@ from web.server import create_app
 def state_with_log():
     state = AppState()
     handler = install_incident_log(state)
-    yield state
-    uninstall_incident_log(handler)
+    try:
+        yield state
+    finally:
+        # In a finally: a failure inside a test would otherwise leave the handler
+        # on the root logger, and every later test in the session would record
+        # into a state object nobody is looking at.
+        uninstall_incident_log(handler)
 
 
 @pytest.fixture
@@ -126,6 +132,21 @@ def test_installing_twice_does_not_duplicate_every_incident(state_with_log):
     uninstall_incident_log(second)
 
 
+def test_a_critical_is_captured_like_the_others(state_with_log):
+    """CRITICAL is on the list the page paints, and nothing exercised it."""
+    logging.critical('Server error: address already in use')
+
+    assert state_with_log.recent_incidents()[0].level == 'CRITICAL'
+
+
+def test_a_warning_about_serving_the_page_is_not_a_fleet_incident(state_with_log):
+    """Werkzeug lives in this process and talks about HTTP. Twenty lines is all
+    the operator reads, and a request warning would push a refused capture out."""
+    logging.getLogger('werkzeug').warning('GET / HTTP/1.1 400 -')
+
+    assert state_with_log.recent_incidents() == []
+
+
 def test_the_levels_shown_are_the_ones_the_page_knows_how_to_paint():
     assert INCIDENT_LEVELS == ('WARNING', 'ERROR', 'CRITICAL')
 
@@ -152,6 +173,27 @@ def test_a_healthy_server_says_so_instead_of_showing_an_empty_table(client):
     body = c.get('/').data.decode()
 
     assert 'Nenhuma ocorrencia' in body
+
+
+def test_a_real_failure_of_the_save_thread_reaches_the_page(client, monkeypatch, tmp_path):
+    """End to end through a failure that exists: save_data logs a Drive copy that
+    failed, and the operator reads it on the page without anyone having
+    instrumented that call site."""
+    from server import tcp_server
+
+    c, state = client
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tcp_server.subprocess, 'run',
+                        lambda *a, **k: (_ for _ in ()).throw(OSError('gio nao instalado')))
+
+    tcp_server.data_queue.put(('10.0.0.7', datetime.datetime(2026, 8, 12, 10, 0),
+                               [[1, 2, 3, 4, 5, 6, 7, 8, 4100]]))
+    tcp_server.data_queue.put(None)
+    tcp_server.save_data()
+
+    body = c.get('/').data.decode()
+    assert 'Google Drive' in body
+    assert 'gio nao instalado' in body
 
 
 def test_a_failure_to_save_the_configuration_is_recorded_where_it_is_seen(client, monkeypatch):

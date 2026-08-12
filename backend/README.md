@@ -131,6 +131,11 @@ Antes disso tudo isso ia só para o terminal do servidor: a página parecia
 saudável enquanto capturas eram recusadas. As ocorrências ficam **em memória**
 (as últimas 200) — restart limpa, e não substituem o log do serviço.
 
+> **Atenção:** as mensagens trazem IP do device, nome de arquivo e o texto do
+> erro, e a página **não tem autenticação** — quem alcança a rede do servidor lê
+> tudo isso. Não é informação nova (a tabela de conexões já mostra os IPs), mas
+> agora inclui texto de exceção. Mesmo risco da seção de OTA.
+
 **Painel direito — Últimas Conexões**
 
 Exibe as últimas 500 conexões dos dispositivos: IP, horário, número de amostras, tensão da bateria e se aquela conexão levou o comando de OTA.
@@ -193,7 +198,7 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-236 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
+239 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
 
 ---
 

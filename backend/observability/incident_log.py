@@ -17,6 +17,11 @@ from app_state import AppState, INCIDENT_LEVELS
 # stacking, which would show every failure twice and halve the ring's depth.
 _HANDLER_MARK = '_sif_incident_log'
 
+# Loggers whose warnings are about serving a page, not about the fleet. Werkzeug
+# is in this process and talks about HTTP requests; letting it in would push real
+# failures out of a ring the operator reads twenty lines of.
+IGNORED_LOGGERS = ('werkzeug',)
+
 
 class IncidentLogHandler(logging.Handler):
     """Pushes WARNING and worse into the state the page renders."""
@@ -29,6 +34,8 @@ class IncidentLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             if record.levelname not in INCIDENT_LEVELS:
+                return
+            if record.name.split('.')[0] in IGNORED_LOGGERS:
                 return
             # record.getMessage() applies the % arguments logging defers, and
             # deliberately leaves the traceback out: the operator needs the

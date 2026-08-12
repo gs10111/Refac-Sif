@@ -73,7 +73,12 @@ class AppState:
         # and the README says so rather than implying an audit trail.
         self.incidents:   deque[IncidentEntry]   = deque(maxlen=INCIDENTS_MAX)
         self.ota_armed:   bool                   = bool(DEFAULT_UPDATE)
-        self.lock:        threading.Lock         = threading.Lock()
+        # Reentrant: the incident log records from whichever thread hit the
+        # failure, and a failure logged from inside a section that already holds
+        # this lock would deadlock the server on a plain Lock. No path does that
+        # today; the point is that adding one must not be a way to hang the
+        # acquisition.
+        self.lock:        threading.RLock        = threading.RLock()
 
     @property
     def config(self) -> DeviceConfig:
