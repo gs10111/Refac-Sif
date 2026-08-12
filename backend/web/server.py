@@ -1,4 +1,6 @@
 import dataclasses
+import sqlite3
+
 from flask import (
     Flask, Response, make_response, render_template, request, redirect,
 )
@@ -44,6 +46,23 @@ def validate_config_form(form) -> tuple[dict, list]:
         else:
             values[field] = value
     return values, errors
+
+
+def _storage_unavailable(error: sqlite3.OperationalError) -> Response:
+    """Answer a write that the database refused.
+
+    Disk full, file turned read-only, lock held past the timeout: none of it
+    means the server is broken — the sensors keep transmitting on the last saved
+    configuration. A bare 500 would read as "everything is down" and send the
+    operator chasing the wrong thing, so the reason is said out loud, and the
+    status says try again rather than "you sent something wrong".
+    """
+    return Response(
+        f'Nao foi possivel salvar a configuracao: {error}. '
+        f'A configuracao anterior continua valendo e os sensores seguem '
+        f'transmitindo com ela.',
+        status=503, mimetype='text/plain',
+    )
 
 
 def create_app(state: AppState) -> Flask:
@@ -110,7 +129,10 @@ def create_app(state: AppState) -> Flask:
         except ValueError as invalid:
             return Response(str(invalid), status=400, mimetype='text/plain')
 
-        state.update_config(sampling_code=code)
+        try:
+            state.update_config(sampling_code=code)
+        except sqlite3.OperationalError as unavailable:
+            return _storage_unavailable(unavailable)
         return redirect('/', 303)
 
     @app.route('/config', methods=['POST'])
@@ -123,10 +145,13 @@ def create_app(state: AppState) -> Flask:
 
         # The rate is deliberately absent from this call: saving the duty cycle
         # must not re-rate the fleet. See update_sampling above.
-        state.update_config(
-            sleep_min=values['sleep_min'], idle_min=values['idle_min'],
-            max_acq=values['max_acq'], cooldown_sec=values['cooldown_sec'],
-        )
+        try:
+            state.update_config(
+                sleep_min=values['sleep_min'], idle_min=values['idle_min'],
+                max_acq=values['max_acq'], cooldown_sec=values['cooldown_sec'],
+            )
+        except sqlite3.OperationalError as unavailable:
+            return _storage_unavailable(unavailable)
 
         return redirect('/', 303)
 

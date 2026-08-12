@@ -14,7 +14,7 @@
 2. **TDD, com o vermelho observado.** Teste antes da implementação, provando o critério de aceite da
    spec — não algo parecido.
    - Firmware: `~/.platformio/penv/bin/pio test -e native`
-   - Backend: `backend/venv/bin/python -m pytest -q` (221 testes, ~2 s)
+   - Backend: `backend/venv/bin/python -m pytest -q` (224 testes, ~2 s)
    - Gateway: `backend/venv/bin/python -m pytest gateway -q` (11 testes; rodam sem broker e sem o thingsboard-gateway instalado)
    - Prova de que o teste **detecta**, não só passa: `pio test -e mutant_<nome>` — ali a **falha é a
      condição de sucesso** (`platformio.ini`, envs `mutant_*`; racional em `test/README.md`).
@@ -79,6 +79,9 @@ O equivalente local ao `TBClient`:
   para um buffer menor.
 - Credencial ausente: o build embarcado **falha alto** (DEC-2). Nunca compilar com um default.
 - Config do servidor: a leitura exige os **12 bytes**; curto é erro, não leitura parcial.
+- Campos de configuração recusam **0** (`backend/store/config_store.py`): 0 é uint16 válido no fio, mas
+  para o device — o original apenas logava. Escrita recusada não grava nada; banco que não abre
+  derruba o boot em vez de cair para memória.
 - Publicação MQTT: `SIF_MQTT_ENABLED` sem `SIF_MQTT_HOST` **não sobe o servidor**; publicar no vazio
   seria pior que recusar iniciar.
 - `except` que só loga e segue precisa justificar **por escrito** por que seguir é correto.

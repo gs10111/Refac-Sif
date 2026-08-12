@@ -147,6 +147,29 @@ def test_a_rejected_duty_cycle_still_writes_nothing_at_all(client):
     assert read_config(db) == DEFAULTS
 
 
+def test_a_database_that_cannot_be_written_answers_instead_of_crashing(client, monkeypatch):
+    """Disk full, file gone read-only, database locked past the timeout: the
+    operator gets a page that says what happened, not a bare 500 that reads as
+    "the server is broken" while the sensors keep transmitting fine."""
+    import sqlite3
+
+    from store import config_store
+
+    def refuse(*args, **kwargs):
+        raise sqlite3.OperationalError('attempt to write a readonly database')
+
+    c, _, _ = client
+    monkeypatch.setattr(config_store, 'write_config', refuse)
+
+    rate = c.post('/sampling', data={'sampling_hz': '200'})
+    duty = c.post('/config', data={'sleep_min': '11', 'idle_min': '12',
+                                   'max_acq': '13', 'cooldown_sec': '14'})
+
+    assert rate.status_code == 503
+    assert duty.status_code == 503
+    assert b'readonly' in rate.data or b'salvar' in rate.data.lower()
+
+
 def test_the_history_and_the_arming_stay_in_memory(client):
     """Only the configuration was moved to disk. Saying otherwise would promise
     an operator that the connection history survives a restart."""

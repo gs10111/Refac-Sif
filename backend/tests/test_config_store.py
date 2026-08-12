@@ -137,3 +137,22 @@ def test_a_path_that_cannot_be_opened_fails_loudly(tmp_path):
 def test_every_config_field_has_a_default_and_nothing_else_does():
     """The two lists are the contract between the store and the page."""
     assert set(CONFIG_FIELDS) == set(DEFAULTS)
+
+
+def test_the_store_and_the_dataclass_describe_the_same_configuration():
+    """read_config() is splatted into DeviceConfig. A field added to one and
+    forgotten in the other raises TypeError on the first device to connect —
+    at runtime, in a thread, hours after the change."""
+    import dataclasses
+
+    from app_state import DeviceConfig
+
+    assert {f.name for f in dataclasses.fields(DeviceConfig)} == set(CONFIG_FIELDS)
+
+
+def test_the_table_can_never_hold_a_second_row(db):
+    """What `WHERE id = 1` leans on. Without this invariant an UPDATE would be
+    ambiguous and a second row could shadow the real configuration."""
+    with sqlite3.connect(db) as conn:
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute('INSERT INTO config (id, sleep_min) VALUES (2, 5)')

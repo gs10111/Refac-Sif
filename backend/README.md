@@ -180,7 +180,7 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-221 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
+224 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
 
 ---
 
