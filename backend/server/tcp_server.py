@@ -40,7 +40,9 @@ from config.settings import (
     SERVER_IP, SERVER_PORT, GDRIVE_PATH,
     CLIENT_TIMEOUT_SEC, MAX_PAYLOAD_BYTES, BATTERY_INVALID,
     MQTT_ENABLED, MQTT_HOST, MQTT_PORT, MQTT_TOPIC_PREFIX, MQTT_CHUNK_SIZE,
+    DB_PATH,
 )
+from store.config_store import init_db
 
 # Where the battery sits in every queued row. Derived from the CSV contract
 # rather than written as 8: the rows ARE the CSV rows, so if a column is ever
@@ -315,7 +317,12 @@ if __name__ == '__main__':
         logging.info(f"Publishing bursts to {MQTT_HOST}:{MQTT_PORT} "
                      f"under '{MQTT_TOPIC_PREFIX}/'")
 
-    state = AppState()
+    # Before any thread: an unusable path must stop the server here, where the
+    # operator sees it, and not once the first device is already transmitting.
+    init_db(DB_PATH)
+    logging.info(f"Configuration stored in {DB_PATH}")
+
+    state = AppState(db_path=DB_PATH)
     threads = [
         threading.Thread(target=server_main,     args=(state,)),
         threading.Thread(target=web_server_main, args=(state,)),

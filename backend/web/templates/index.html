@@ -95,6 +95,23 @@
       </form>
 
       <div class="panel-ota">
+        <h2>Taxa de amostragem</h2>
+        <div class="ota-state">Frota em <strong>{{ sampling_hz }} Hz</strong></div>
+        <form method="POST" action="/sampling">
+          <div class="field">
+            <label for="sampling_hz">Nova taxa</label>
+            <select name="sampling_hz" id="sampling_hz">
+              {% for hz in sampling_options %}
+                <option value="{{ hz }}" {% if hz == sampling_hz %}selected{% endif %}>{{ hz }} Hz</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit" class="secondary">TROCAR TAXA</button>
+        </form>
+        <div class="ota-last">Cada sensor grava a taxa nova e a adota no boot seguinte &mdash; a captura em curso termina na taxa antiga.</div>
+      </div>
+
+      <div class="panel-ota">
         <h2>Atualizacao OTA</h2>
         {% if ota_armed %}
           <div class="ota-state armed">OTA ARMADO &mdash; proximo device que transmitir</div>

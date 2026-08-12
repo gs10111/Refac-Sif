@@ -9,6 +9,7 @@ from config.settings import (
     DEFAULT_MAX_ACQ, DEFAULT_COOLDOWN_SEC, DEFAULT_UPDATE,
     HISTORY_MAX_CONNECTIONS, SAMPLING_CODE,
 )
+from store import config_store
 
 
 @dataclass
@@ -40,11 +41,49 @@ class AppState:
     by lock — use the methods below rather than touching the fields directly.
     """
 
-    def __init__(self) -> None:
-        self.config:      DeviceConfig          = DeviceConfig()
+    def __init__(self, db_path: str | None = None) -> None:
+        # With a db_path the file is the ONLY source of the configuration: it is
+        # read on every access, so a save on the page reaches the next device to
+        # connect without a restart, and survives one. Without a db_path the
+        # configuration lives in memory and goes back to the defaults when the
+        # process ends — the behaviour this server always had, kept for tests and
+        # for anyone running without a writable path.
+        #
+        # The connection history and the OTA arming stay in memory either way.
+        # Only the configuration was moved to disk; promising more would tell an
+        # operator the history survives a restart, and it does not.
+        self.db_path:     str | None             = db_path
+        self._config:     DeviceConfig           = DeviceConfig()
         self.connections: deque[ConnectionEntry] = deque(maxlen=HISTORY_MAX_CONNECTIONS)
         self.ota_armed:   bool                   = bool(DEFAULT_UPDATE)
         self.lock:        threading.Lock         = threading.Lock()
+
+    @property
+    def config(self) -> DeviceConfig:
+        """The configuration in force.
+
+        File-backed: a fresh snapshot, read now. In memory: the live object, so
+        the field-by-field mutation the page used to do still works.
+        """
+        if self.db_path is None:
+            return self._config
+        return DeviceConfig(**config_store.read_config(self.db_path))
+
+    def update_config(self, **fields) -> None:
+        """Write the fields given and leave every other one untouched.
+
+        Partial on purpose: the rate has its own route and the duty cycle its own
+        form, and neither may drag the other along. Validation lives in the store,
+        so a rejected value writes nothing in either mode.
+        """
+        if self.db_path is not None:
+            config_store.write_config(self.db_path, **fields)
+            return
+        for field, value in fields.items():
+            config_store.validate_field(field, value)
+        with self.lock:
+            for field, value in fields.items():
+                setattr(self._config, field, value)
 
     def set_ota_armed(self, armed: bool) -> None:
         """Arm or disarm the one-shot OTA flag (POST /ota)."""

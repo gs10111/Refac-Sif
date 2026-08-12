@@ -64,6 +64,15 @@ def sampling_code_from_hz(hz) -> int:
     return SAMPLING_CODES[key]
 
 
+def is_valid_sampling_code(code) -> bool:
+    """Whether a code is one of the five the part can actually run.
+
+    The mirror of is_valid_sampling_code() in lib/protocol/packet.h: what the
+    firmware refuses to apply, the server refuses to store or send.
+    """
+    return code in _HZ_BY_SAMPLING_CODE
+
+
 def sampling_hz_from_code(code: int) -> str:
     """The rate a code stands for, for logs and for the connection history."""
     if code == SAMPLING_CODE_NO_CHANGE:
