@@ -27,3 +27,7 @@ gateway/gw-config/
 sif.db
 sif.db-wal
 sif.db-shm
+
+# Capturas gravadas pelo servidor no diretorio de onde ele sobe. São dado de
+# execução, não de código — uma entrou por engano no PR do trailer.
+*.csv
