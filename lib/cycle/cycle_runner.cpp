@@ -108,12 +108,29 @@ CycleOutcome CycleRunner::runIteration(const NetworkConfig &network, ServerConfi
 #else
                 if (!is_valid_sampling_code(received.sampling_code))
                 {
+                    SIF_LOGF("Taxa ignorada: codigo %u nao e valido; mantida %u.\n",
+                             (unsigned)received.sampling_code,
+                             (unsigned)config.sampling_code);
                     received.sampling_code = config.sampling_code;
                 }
                 else if (received.sampling_code !=
                          _store.getUShort(SAMPLING_CODE_NVS_KEY, DEFAULT_SAMPLING_CODE))
                 {
                     _store.putUShort(SAMPLING_CODE_NVS_KEY, received.sampling_code);
+                    // Said out loud, and said completely: the write is only half
+                    // the story. D1 keeps the device awake between acquisitions,
+                    // so the rate reaches the sensor at the next BOOT — after a
+                    // reset, or after the deep sleep that follows max_acq. An
+                    // operator who changes the rate on the page and watches the
+                    // next capture would otherwise conclude it was ignored.
+                    SIF_LOGF("Nova taxa gravada: codigo ODR %u. "
+                             "Passa a valer no proximo boot (reset ou apos o deep sleep).\n",
+                             (unsigned)received.sampling_code);
+                }
+                else
+                {
+                    SIF_LOGF("Taxa mantida: codigo ODR %u.\n",
+                             (unsigned)received.sampling_code);
                 }
 #endif
 
