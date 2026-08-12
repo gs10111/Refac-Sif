@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fluxo do sensor SIF — como o firmware se comporta</title>
+<style>
+  :root {
+    --bg:        #F2F1EE;
+    --surface:   #FBFAF8;
+    --surface-2: #EAE8E3;
+    --ink:       #1B1F24;
+    --muted:     #5C6570;
+    --rule:      #D5D2CB;
+    --accent:    #B8730E;   /* lâmpada indicadora: a fase acordada */
+    --radio:     #1F6E72;   /* rádio ligado, 240 MHz */
+    --alert:     #A03323;   /* descarte, falha */
+    --sleep:     #4A4E63;   /* deep sleep */
+    --code-bg:   #ECEAE4;
+
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --serif: "Iowan Old Style", "Charter", Charter, Georgia, Cambria, serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:        #14181D;
+      --surface:   #1B2027;
+      --surface-2: #232932;
+      --ink:       #E6E8EA;
+      --muted:     #98A2AE;
+      --rule:      #2E353F;
+      --accent:    #E5A648;
+      --radio:     #4FB3B8;
+      --alert:     #E0705C;
+      --sleep:     #9AA0C0;
+      --code-bg:   #1F252D;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg:        #14181D;
+    --surface:   #1B2027;
+    --surface-2: #232932;
+    --ink:       #E6E8EA;
+    --muted:     #98A2AE;
+    --rule:      #2E353F;
+    --accent:    #E5A648;
+    --radio:     #4FB3B8;
+    --alert:     #E0705C;
+    --sleep:     #9AA0C0;
+    --code-bg:   #1F252D;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 17px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 20px 96px;
+  }
+
+  .wrap { max-width: 74ch; margin: 0 auto; }
+  .prose { max-width: 65ch; }
+
+  header.masthead {
+    border-bottom: 2px solid var(--ink);
+    padding: 56px 0 20px;
+    margin-bottom: 36px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--sans);
+    font-weight: 800;
+    letter-spacing: -0.025em;
+    font-size: clamp(30px, 5.4vw, 44px);
+    line-height: 1.08;
+    text-wrap: balance;
+    margin: 0 0 14px;
+  }
+  .standfirst {
+    color: var(--muted);
+    font-size: 18px;
+    margin: 0;
+    max-width: 60ch;
+  }
+
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 26px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .facts li {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 5px 9px;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .facts b { color: var(--ink); font-weight: 600; }
+
+  h2 {
+    font-family: var(--sans);
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    font-size: 25px;
+    line-height: 1.2;
+    text-wrap: balance;
+    margin: 56px 0 6px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+  }
+  h2 .num {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: 0.1em;
+    color: var(--accent);
+    display: block;
+    margin-bottom: 7px;
+    font-weight: 500;
+  }
+  h3 {
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    margin: 34px 0 4px;
+  }
+  p { margin: 12px 0; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.855em;
+    background: var(--code-bg);
+    border-radius: 3px;
+    padding: 1px 5px;
+    color: var(--ink);
+  }
+
+  .steps { list-style: none; padding: 0; margin: 22px 0 0; display: grid; gap: 2px; }
+  .steps li {
+    display: grid;
+    grid-template-columns: 2.6rem 1fr;
+    gap: 14px;
+    padding: 13px 0;
+    border-bottom: 1px solid var(--rule);
+    align-items: start;
+  }
+  .steps .k {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--accent);
+    padding-top: 5px;
+    font-variant-numeric: tabular-nums;
+  }
+  .steps b { font-family: var(--sans); font-size: 15.5px; letter-spacing: -0.005em; }
+  .steps span { display: block; color: var(--muted); font-size: 15.5px; }
+
+  figure { margin: 30px 0; }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    padding: 26px 20px 20px;
+    overflow-x: auto;
+  }
+  figcaption {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 10px;
+    line-height: 1.5;
+  }
+  svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+  .svg-label { font-family: var(--mono); font-size: 11px; fill: var(--muted); letter-spacing: 0.03em; }
+  .svg-state { font-family: var(--mono); font-size: 13px; font-weight: 600; letter-spacing: 0.02em; }
+  .svg-note  { font-family: var(--mono); font-size: 10.5px; fill: var(--muted); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 22px 0;
+    font-size: 15px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 12px 10px 0;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 500;
+    border-bottom: 1px solid var(--ink);
+  }
+  td.mono, .tabular { font-family: var(--mono); font-size: 13.5px; font-variant-numeric: tabular-nums; }
+
+  .scroller { overflow-x: auto; }
+
+  .bytes {
+    display: flex;
+    gap: 3px;
+    margin: 18px 0 6px;
+    min-width: 520px;
+  }
+  .bytes div {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    padding: 9px 8px;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    background: var(--surface-2);
+    text-align: center;
+    line-height: 1.35;
+  }
+  .bytes .lead { flex: 0 0 88px; border-color: var(--accent); }
+  .bytes .body { flex: 1 1 auto; }
+  .bytes .tail { flex: 0 0 96px; border-color: var(--radio); }
+  .bytes small { display: block; color: var(--muted); font-size: 10.5px; }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--surface);
+    padding: 14px 18px;
+    margin: 26px 0;
+    font-size: 15.5px;
+  }
+  .callout.warn { border-left-color: var(--alert); }
+  .callout p { margin: 6px 0; }
+  .callout b { font-family: var(--sans); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 16px 0 0; padding: 0; list-style: none; }
+  .legend li { font-family: var(--mono); font-size: 11.5px; color: var(--muted); display: flex; align-items: center; gap: 7px; }
+  .swatch { width: 11px; height: 11px; border-radius: 2px; display: inline-block; }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    line-height: 1.7;
+  }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  a:focus-visible, li:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+</style>
+</head>
+<body>
+
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Refac-Sif · firmware ESP32-PICO · main + trailer de 7 B</p>
+  <h1>O que o sensor faz, do ímã ao byte no servidor</h1>
+  <p class="standfirst">Fluxo lido do código, não do plano: cada estado, cada decisão e cada tempo abaixo aponta para o arquivo e a linha que o implementam.</p>
+  <ul class="facts">
+    <li>ímã <b>ext0</b> acorda</li>
+    <li>ring <b>1.080.000 B</b> = 60.000 frames</li>
+    <li>amostra <b>18 B</b></li>
+    <li>config <b>12 B</b></li>
+    <li>trailer <b>7 B</b></li>
+    <li>TCP <b>:12345</b></li>
+    <li>taxa <b>12,5–200 Hz</b></li>
+  </ul>
+</header>
+
+<section class="prose">
+  <h2><span class="num">01 — BOOT</span>App::begin()</h2>
+  <p>Toda energização e todo despertar do deep sleep passam por aqui, na ordem exata abaixo. A ordem não é estética: cada passo depende do anterior ter acontecido.</p>
+
+  <ol class="steps">
+    <li><span class="k">1</span><span><b>OTA antes de tudo.</b> Lê a flag <code>update</code> na NVS. Armada: sobe o SoftAP <code>Update driver - &lt;MAC&gt;</code>, serve a página de upload por 5 min e nunca retorna — termina em restart. AP que falha ao subir deixa a flag para o próximo boot.</span></li>
+    <li><span class="k">2</span><span><b>Pinos e IP fixo.</b> Reed switch, ADC de bateria, LED, INT do IMU, e <code>WiFi.config()</code> com o endereço estático.</span></li>
+    <li><span class="k">3</span><span><b>Buffer na PSRAM.</b> 1.080.000 bytes — 200 Hz × 300 s × 18 B, múltiplo exato do frame. Alocação nula não degrada: para com halt e mensagem na serial.</span></li>
+    <li><span class="k">4</span><span><b>Taxa vinda da NVS.</b> Chave <code>freq</code>, validada contra a lista de cinco códigos ODR. O que a NVS devolve não é confiável — código fora da lista vira 50 Hz.</span></li>
+    <li><span class="k">5</span><span><b>Um wake por boot.</b> O nibble ODR só entra nos registradores enquanto a peça sai de OFF, então aplicar a taxa e acordar são o mesmo ato.</span></li>
+    <li><span class="k">6</span><span><b>Cooldown armado.</b> É o que impede o ímã que causou o despertar de encerrar a primeira aquisição no primeiro poll.</span></li>
+    <li><span class="k">7</span><span><b>Rádio off, CPU a 10 MHz.</b> Daqui até a transmissão, a serial sai embaralhada — o divisor de baud acompanha o clock.</span></li>
+  </ol>
+</section>
+
+<section>
+  <h2><span class="num">02 — MÁQUINA DE ESTADOS</span>Dois estágios que sobrevivem ao sono</h2>
+  <div class="prose">
+    <p>O estágio vive em <code>RTC_DATA_ATTR</code>, então atravessa o deep sleep. Toda decisão de para onde ir é de uma função pura, sem relógio e sem hardware — o que a torna inteiramente testável fora do alvo.</p>
+  </div>
+
+  <figure>
+    <div class="panel">
+      <svg viewBox="0 0 700 330" role="img" aria-label="Máquina de estados: ARM_TRIGGER dorme por ímã e acorda em CYCLE; CYCLE repete iterações, vai para OTA por restart quando o servidor pede update, ou volta para ARM_TRIGGER dormindo por tempo quando a cota enche ou a esteira para.">
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--muted)"/>
+          </marker>
+          <marker id="ar-accent" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)"/>
+          </marker>
+          <marker id="ar-alert" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--alert)"/>
+          </marker>
+        </defs>
+
+        <!-- ARM_TRIGGER -->
+        <rect x="24" y="120" width="184" height="76" rx="4" fill="var(--surface-2)" stroke="var(--sleep)" stroke-width="1.5"/>
+        <text class="svg-state" x="116" y="152" text-anchor="middle" fill="var(--ink)">ARM_TRIGGER</text>
+        <text class="svg-note" x="116" y="172" text-anchor="middle">deep sleep até o ímã</text>
+
+        <!-- CYCLE -->
+        <rect x="288" y="120" width="184" height="76" rx="4" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+        <text class="svg-state" x="380" y="152" text-anchor="middle" fill="var(--ink)">CYCLE</text>
+        <text class="svg-note" x="380" y="172" text-anchor="middle">acordado, coletando</text>
+
+        <!-- OTA -->
+        <rect x="552" y="120" width="128" height="76" rx="4" fill="var(--surface-2)" stroke="var(--radio)" stroke-width="1.5"/>
+        <text class="svg-state" x="616" y="152" text-anchor="middle" fill="var(--ink)">OTA</text>
+        <text class="svg-note" x="616" y="172" text-anchor="middle">SoftAP, 5 min</text>
+
+        <!-- arm -> cycle -->
+        <path d="M 208 158 L 280 158" stroke="var(--accent)" stroke-width="2" fill="none" marker-end="url(#ar-accent)"/>
+        <text class="svg-label" x="244" y="146" text-anchor="middle">ext0</text>
+
+        <!-- cycle self loop -->
+        <path d="M 330 120 C 330 62, 430 62, 430 120" stroke="var(--accent)" stroke-width="2" fill="none" marker-end="url(#ar-accent)"/>
+        <text class="svg-label" x="380" y="72" text-anchor="middle">uma iteração</text>
+
+        <!-- cycle -> arm (sleep timer) -->
+        <path d="M 300 196 C 250 262, 160 262, 116 200" stroke="var(--sleep)" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+        <text class="svg-label" x="208" y="268" text-anchor="middle">cota cheia ou esteira parada → dorme sleep_min</text>
+
+        <!-- cycle -> ota -->
+        <path d="M 472 158 L 544 158" stroke="var(--radio)" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+        <text class="svg-label" x="508" y="146" text-anchor="middle">update=1</text>
+        <text class="svg-note" x="508" y="176" text-anchor="middle">restart</text>
+
+        <!-- ota -> arm (via boot) -->
+        <path d="M 616 120 C 616 34, 116 34, 116 116" stroke="var(--muted)" stroke-width="1.5" fill="none" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+        <text class="svg-label" x="366" y="28" text-anchor="middle">restart ao fim da janela → boot</text>
+      </svg>
+    </div>
+    <figcaption>lib/belt_cycle/belt_cycle.cpp · o estágio é RTC_DATA_ATTR, sobrevive ao deep sleep</figcaption>
+  </figure>
+
+  <ul class="legend">
+    <li><span class="swatch" style="background:var(--accent)"></span>acordado, 10 MHz</li>
+    <li><span class="swatch" style="background:var(--radio)"></span>rádio ligado</li>
+    <li><span class="swatch" style="background:var(--sleep)"></span>deep sleep</li>
+  </ul>
+
+  <div class="scroller">
+    <table>
+      <thead>
+        <tr><th>Estágio</th><th>Condição</th><th>Ação</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">ARM_TRIGGER</td><td>sempre</td><td>dorme por ext0; o ímã acorda já em <span class="tabular">CYCLE</span></td></tr>
+        <tr><td class="mono">CYCLE</td><td>servidor pediu update</td><td><b>restart</b> para o modo OTA</td></tr>
+        <tr><td class="mono">CYCLE</td><td><span class="tabular">aquisições ≥ max_acq</span> ou idle estourou</td><td>deep sleep por timer, <span class="tabular">sleep_min</span></td></tr>
+        <tr><td class="mono">CYCLE</td><td>resto</td><td>roda mais uma iteração</td></tr>
+        <tr><td class="mono">qualquer</td><td>byte de estágio corrompido</td><td>cai para esperar o ímã, nunca para um estado sem ação</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout">
+    <p><b>A ordem das duas primeiras condições é o comportamento.</b> O pedido de update é avaliado antes da decisão de dormir. Invertido, um OTA que chegasse na última aquisição do ciclo sumiria por <span class="tabular">sleep_min</span> — quatro horas com o padrão em vigor.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">03 — UMA ITERAÇÃO</span>Coleta a 10 MHz, transmite a 240</h2>
+  <div class="prose">
+    <p>A troca de clock é a espinha da iteração: coletar é barato e demorado, transmitir é caro e curto. É também por isso que a serial só é legível na metade direita do desenho.</p>
+  </div>
+
+  <figure>
+    <div class="panel">
+      <svg viewBox="0 0 700 250" role="img" aria-label="Trilha de clock de uma iteração: coleta a 10 MHz com o rádio desligado, transmissão a 240 MHz com o rádio ligado, e retorno a 10 MHz em todos os caminhos.">
+        <!-- clock rail -->
+        <rect x="24" y="60" width="300" height="34" rx="3" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text class="svg-state" x="174" y="82" text-anchor="middle" fill="var(--ink)">10 MHz · rádio off</text>
+
+        <rect x="324" y="60" width="252" height="34" rx="3" fill="var(--surface-2)" stroke="var(--radio)" stroke-width="2"/>
+        <text class="svg-state" x="450" y="82" text-anchor="middle" fill="var(--ink)">240 MHz · rádio on</text>
+
+        <rect x="576" y="60" width="100" height="34" rx="3" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="1.5"/>
+        <text class="svg-note" x="626" y="82" text-anchor="middle">10 MHz</text>
+
+        <text class="svg-label" x="24" y="46">CLOCK</text>
+
+        <!-- serial legibility -->
+        <text class="svg-label" x="24" y="126">SERIAL</text>
+        <rect x="24" y="136" width="300" height="20" rx="2" fill="none" stroke="var(--alert)" stroke-width="1" stroke-dasharray="4 3"/>
+        <text class="svg-note" x="174" y="150" text-anchor="middle">embaralhada</text>
+        <rect x="324" y="136" width="252" height="20" rx="2" fill="none" stroke="var(--radio)" stroke-width="1"/>
+        <text class="svg-note" x="450" y="150" text-anchor="middle">legível</text>
+        <rect x="576" y="136" width="100" height="20" rx="2" fill="none" stroke="var(--alert)" stroke-width="1" stroke-dasharray="4 3"/>
+
+        <!-- work -->
+        <text class="svg-label" x="24" y="190">O QUE ACONTECE</text>
+        <text class="svg-note" x="24" y="210">poll do IMU · guarda 18 B por DATA_RDY</text>
+        <text class="svg-note" x="24" y="226">para no ímã, ou em idle_min sem ímã</text>
+        <text class="svg-note" x="330" y="210">Wi-Fi 5 s · TCP · payload em blocos de 990 B</text>
+        <text class="svg-note" x="330" y="226">bateria depois do payload · lê 12 B, espera 2 s</text>
+      </svg>
+    </div>
+    <figcaption>lib/cycle/cycle_runner.cpp · lib/acquisition/acquisition.cpp · lib/protocol/uploader.cpp</figcaption>
+  </figure>
+
+  <h3>Coleta</h3>
+  <p>Cada passo carimba <code>millis()</code> <em>antes</em> de ler o sensor e só guarda o frame se <code>DATA_RDY</code> estiver setado — é o que faz o buffer encher na taxa do sensor, e não na do laço. Se a taxa mudou desde a última aquisição, ela é aplicada aqui, com um wake; se não mudou, nada é escrito no rádio nem no sensor.</p>
+  <p>A coleta termina de dois jeitos, e eles não são equivalentes:</p>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Fim</th><th>Significa</th><th>O que acontece com o dado</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">ímã passou</td><td>uma volta da esteira</td><td>transmite</td></tr>
+        <tr><td class="mono">idle_min</td><td>esteira parada</td><td><b>descarta sem enviar</b>, ring intacto para a próxima</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Transmissão</h3>
+  <p>O <code>ring.reset()</code> acontece depois do envio <em>e é incondicional</em>: um envio parcial perde o dado dos dois lados. É fidelidade à produção, não descuido — e é o motivo de o servidor registrar a conexão incompleta em vez de calar.</p>
+
+  <div class="callout warn">
+    <p><b>O rádio é desligado em todos os caminhos</b> — sucesso, falha de conexão, ou aquisição que nem chegou a transmitir. Um caminho que esquecesse disso deixaria o rádio ligado durante a coleta seguinte, a 10 MHz.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">04 — CONTRATO</span>Os bytes, nos dois sentidos</h2>
+
+  <h3>Sensor → servidor</h3>
+  <div class="scroller">
+    <div class="bytes">
+      <div class="lead">4 B<small>total do payload<br>uint32 LE</small></div>
+      <div class="body">N × 18 B<small>frames: ts uint32 · ax gx ay gy az gz temp, int16 LE</small></div>
+      <div class="tail">7 B<small>trailer: bateria · fw · Hz medidos</small></div>
+    </div>
+  </div>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Offset</th><th>Campo</th><th>Tipo</th><th>O que responde</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">0-1</td><td class="mono">battery_mv</td><td class="mono">uint16 LE</td><td>tensão sob carga, medida depois do payload</td></tr>
+        <tr><td class="mono">2</td><td class="mono">fw major</td><td class="mono">uint8</td><td rowspan="3">qual firmware este sensor roda — antes ninguém sabia</td></tr>
+        <tr><td class="mono">3</td><td class="mono">fw minor</td><td class="mono">uint8</td></tr>
+        <tr><td class="mono">4</td><td class="mono">fw patch</td><td class="mono">uint8</td></tr>
+        <tr><td class="mono">5-6</td><td class="mono">effective_hz</td><td class="mono">uint16 LE</td><td>a taxa <b>atingida</b>, não a pedida</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Sete bytes, ou exatamente dois de um sensor ainda na versão antiga — uma frota é regravada um sensor por vez. Qualquer outro tamanho é enquadramento quebrado e é recusado: ler assim mesmo transformaria bytes deslocados de payload numa bateria e numa versão que parecem dado.</p>
+  <p>O cabeçalho sozinho decide onde o payload termina — contar bytes conforme chegam foi o que, na versão anterior, deixava a bateria ser lida como amostra. A bateria é amostrada <em>depois</em> do payload, com o rádio quente: é sob carga que a medida significa alguma coisa.</p>
+
+  <h3>Servidor → sensor</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Offset</th><th>Campo</th><th>Padrão</th><th>Quando passa a valer</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">0</td><td class="mono">sleep_min</td><td class="tabular">240</td><td>na hora</td></tr>
+        <tr><td class="mono">2</td><td class="mono">idle_min</td><td class="tabular">20</td><td>na hora</td></tr>
+        <tr><td class="mono">4</td><td class="mono">max_acq</td><td class="tabular">5</td><td>na hora</td></tr>
+        <tr><td class="mono">6</td><td class="mono">cooldown_sec</td><td class="tabular">5</td><td>na hora</td></tr>
+        <tr><td class="mono">8</td><td class="mono">update</td><td class="tabular">0</td><td>arma ou <b>desarma</b> o OTA</td></tr>
+        <tr><td class="mono">10</td><td class="mono">sampling_code</td><td class="tabular">9 = 50 Hz</td><td>gravado na NVS, aplicado na <b>próxima aquisição</b></td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Doze bytes, seis <code>uint16</code> little-endian. Frame curto é recusado inteiro: meia configuração seria uma que ninguém escolheu. Os cinco primeiros campos mantêm os offsets do servidor legado — o sexto foi acrescentado no fim.</p>
+
+  <h3>Códigos ODR</h3>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Código</th><th>Taxa</th><th>Buffer cheio em</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">7</td><td class="tabular">200 Hz</td><td class="tabular">5 min</td></tr>
+        <tr><td class="mono">8</td><td class="tabular">100 Hz</td><td class="tabular">10 min</td></tr>
+        <tr><td class="mono">9</td><td class="tabular">50 Hz</td><td class="tabular">20 min</td></tr>
+        <tr><td class="mono">10</td><td class="tabular">25 Hz</td><td class="tabular">40 min</td></tr>
+        <tr><td class="mono">11</td><td class="tabular">12,5 Hz</td><td class="tabular">80 min</td></tr>
+        <tr><td class="mono">0</td><td>sem opinião</td><td>o sensor mantém a que roda</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>São os cinco nibbles em que acelerômetro <em>e</em> giroscópio operam. Os códigos 12 a 14 são reservados para o giroscópio nesta peça, e nenhum caminho os deixa chegar ao registrador — nem vindos do servidor, nem vindos da NVS.</p>
+</section>
+
+<section>
+  <h2><span class="num">05 — BUFFER CIRCULAR</span>60.000 frames que nunca desalinham</h2>
+  <div class="prose">
+    <p>O buffer é indexado em <b>frames</b>, nunca em bytes. É essa decisão que garante que toda volta caia em fronteira de amostra — um ring medido em bytes desalinha o enquadramento a cada wrap, e o servidor, que fatia de 18 em 18, passa a decodificar lixo a partir dali.</p>
+  </div>
+
+  <figure>
+    <div class="panel">
+      <svg viewBox="0 0 700 220" role="img" aria-label="Buffer circular: head aponta para a próxima escrita, tail para a amostra mais antiga; quando cheio, escrever avança os dois e a transmissão sai em duas faixas, a partir de tail.">
+        <text class="svg-label" x="24" y="26">SEM VOLTA — uma faixa</text>
+        <rect x="24" y="38" width="290" height="30" rx="3" fill="var(--accent)" opacity="0.18" stroke="var(--accent)"/>
+        <rect x="314" y="38" width="362" height="30" rx="3" fill="none" stroke="var(--rule)" stroke-dasharray="4 4"/>
+        <text class="svg-note" x="30" y="58">tail = 0</text>
+        <text class="svg-note" x="322" y="58">head</text>
+        <text class="svg-note" x="600" y="58" text-anchor="end">vazio</text>
+
+        <text class="svg-label" x="24" y="118">COM VOLTA — duas faixas, mais antiga primeiro</text>
+        <rect x="24" y="130" width="150" height="30" rx="3" fill="var(--radio)" opacity="0.22" stroke="var(--radio)"/>
+        <rect x="174" y="130" width="60" height="30" rx="3" fill="none" stroke="var(--rule)"/>
+        <rect x="234" y="130" width="442" height="30" rx="3" fill="var(--accent)" opacity="0.18" stroke="var(--accent)"/>
+        <text class="svg-note" x="30" y="150">2ª faixa: 0 → tail</text>
+        <text class="svg-note" x="240" y="150">1ª faixa: tail → fim do storage</text>
+        <text class="svg-note" x="178" y="150">head</text>
+
+        <text class="svg-note" x="24" y="192">A ordem de envio é sempre a mais antiga primeiro; quem lê o CSV vê o tempo correr.</text>
+      </svg>
+    </div>
+    <figcaption>lib/ringbuffer/ring_buffer.cpp · plan() devolve as faixas; append() sobrescreve a mais antiga</figcaption>
+  </figure>
+
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Grandeza</th><th>Valor</th><th>De onde vem</th></tr></thead>
+      <tbody>
+        <tr><td>Alocação na PSRAM</td><td class="tabular">1.080.000 B</td><td>200 Hz × 300 s × 18 B</td></tr>
+        <tr><td>Capacidade</td><td class="tabular">60.000 frames</td><td>divisão exata — nenhum byte sobra</td></tr>
+        <tr><td>Fundo a 200 Hz</td><td class="tabular">5 min</td><td>o pior caso que o dimensionou</td></tr>
+        <tr><td>Fundo a 50 Hz</td><td class="tabular">20 min</td><td>a taxa que a frota rodava</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="prose">
+    <p>Os 700.000 B anteriores <b>não</b> eram múltiplo de 18: o ring usava 38.888 frames e os últimos 16 bytes eram inalcançáveis. Isso saiu quando a taxa virou configurável — a 200 Hz aquele buffer encheria em seis minutos e meio.</p>
+
+    <h3>Quando enche</h3>
+    <p><code>append</code> sobrescreve a mais antiga: <code>head</code> avança sempre, e <code>tail</code> só começa a avançar quando a contagem bate na capacidade. Nada é descartado por decisão — o dado mais velho simplesmente cede lugar.</p>
+
+    <h3>Quando é limpo</h3>
+    <p>Nunca no início da aquisição, e <b>sempre</b> depois do envio, inclusive quando o envio falhou no meio. É fidelidade à produção, não descuido: envio parcial perde o dado dos dois lados, e é por isso que o servidor registra a conexão incompleta em vez de calar.</p>
+    <p>A exceção é a aquisição encerrada por <code>idle_min</code>: ela não transmite e não limpa, então o que estiver guardado sai junto na próxima transmissão bem-sucedida.</p>
+
+    <h3>Se a PSRAM faltar</h3>
+    <p><code>ps_malloc</code> nulo faz a capacidade ser zero, <code>append</code> recusar e o boot parar com halt e mensagem na serial. Não existe caminho que continue com meio buffer — foi exatamente esse o defeito que o refactor original introduziu, gravando a primeira amostra no endereço zero.</p>
+  </div>
+</section>
+
+<section>
+  <h2><span class="num">06 — TEMPOS</span>Os prazos que decidem o comportamento</h2>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Prazo</th><th>Valor</th><th>Quem impõe</th><th>O que acontece ao estourar</th></tr></thead>
+      <tbody>
+        <tr><td>Conexão Wi-Fi</td><td class="tabular">5 s</td><td>sensor</td><td>desiste e imprime o motivo do rádio</td></tr>
+        <tr><td>Resposta de config</td><td class="tabular">2 s</td><td>sensor</td><td>segue com a config anterior</td></tr>
+        <tr><td>Leitura do cliente</td><td class="tabular">6 s</td><td>servidor</td><td>registra quantos bytes chegaram e encerra</td></tr>
+        <tr><td>Janela de OTA</td><td class="tabular">5 min</td><td>sensor</td><td>reinicia em modo normal; o armamento já foi gasto</td></tr>
+        <tr><td>Esteira parada</td><td class="tabular">20 min</td><td>config</td><td>encerra o ciclo e dorme por tempo</td></tr>
+        <tr><td>Deep sleep</td><td class="tabular">240 min</td><td>config</td><td>acorda por timer e recomeça do boot</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="prose">
+  <h2><span class="num">07 — ONDE LER</span>Cada decisão tem endereço</h2>
+  <div class="scroller">
+    <table>
+      <thead><tr><th>Decisão</th><th>Arquivo</th></tr></thead>
+      <tbody>
+        <tr><td>ordem do boot, ações do estágio</td><td class="mono">src/app/app.cpp</td></tr>
+        <tr><td>para onde ir a seguir</td><td class="mono">lib/belt_cycle/belt_cycle.cpp</td></tr>
+        <tr><td>uma iteração ponta a ponta</td><td class="mono">lib/cycle/cycle_runner.cpp</td></tr>
+        <tr><td>o ring: faixas, wrap, reset</td><td class="mono">lib/ringbuffer/ring_buffer.cpp</td></tr>
+        <tr><td>coleta, idle, aplicação da taxa</td><td class="mono">lib/acquisition/acquisition.cpp</td></tr>
+        <tr><td>borda do ímã e cooldown</td><td class="mono">lib/belt_trigger/belt_trigger.cpp</td></tr>
+        <tr><td>bytes na rede, espera pela config</td><td class="mono">lib/protocol/uploader.cpp</td></tr>
+        <tr><td>formato e validação do contrato</td><td class="mono">lib/protocol/packet.cpp</td></tr>
+        <tr><td>armar, desarmar e entrar em OTA</td><td class="mono">lib/ota/ota_arming.cpp</td></tr>
+        <tr><td>clock, rádio e deep sleep</td><td class="mono">lib/power/power_manager.cpp</td></tr>
+        <tr><td>constantes de tamanho e pino</td><td class="mono">include/board.h</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Tudo em <code>lib/</code> roda em <code>env:native</code>, sem hardware: o que toca o ESP32 mora atrás das interfaces de <code>lib/hal/</code> e entra injetado. É por isso que a máquina de estados, o contrato e a política de taxa têm teste, e a configuração de rádio não tem.</p>
+</section>
+
+<section class="prose">
+  <h2><span class="num">08 — NA BANCADA</span>Três coisas que confundem</h2>
+  <p><b>A serial embaralha e não é defeito.</b> Entre o fim do boot e a transmissão a CPU está a 10 MHz e o divisor de baud acompanha. O que sai legível é justamente o que importa: boot, Wi-Fi, transmissão e config.</p>
+  <p><b>Trocar a taxa não muda a captura em curso.</b> Ela é gravada quando chega e aplicada na aquisição seguinte. A que estiver rodando termina na taxa antiga — e a confirmação independente está no CSV: delta mediano de 5 ms é 200 Hz, 20 ms é 50 Hz.</p>
+  <p><b>Ciclo sem ímã não gera arquivo.</b> Aquisição encerrada por <code>idle_min</code> é descartada sem transmitir, de propósito. Silêncio no servidor com sensor vivo é isso, não falha de rede.</p>
+</section>
+
+<footer>
+  Lido de <span class="tabular">main + trailer de 7 B</span> · ESP32-PICO + ICM-42688-P<br>
+  Números conferidos contra o código; nada aqui foi medido em campo.
+</footer>
+
+</div>
+
+</body>
+</html>

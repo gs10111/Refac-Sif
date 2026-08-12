@@ -23,6 +23,7 @@ Threads (started from __main__):
 
 import socket
 import csv
+import time
 import queue
 import threading
 import logging
@@ -33,7 +34,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from protocol.packet import (
     SAMPLE_SIZE_BYTES, HEADER_SIZE_BYTES, BATTERY_SIZE_BYTES, CSV_COLUMNS,
-    BATTERY_COLUMN, parse_sample, pack_server_config
+    BATTERY_COLUMN, LEGACY_TRAILER_SIZE, TRAILER_SIZE,
+    parse_sample, parse_trailer, pack_server_config
 )
 from telemetry.publisher import TelemetryPublisher
 from config.settings import (
@@ -49,6 +51,15 @@ from observability.incident_log import install_incident_log
 # rather than written as 8: the rows ARE the CSV rows, so if a column is ever
 # inserted the index follows instead of quietly reading a gyro reading as volts.
 BATTERY_COLUMN_INDEX = CSV_COLUMNS.index(BATTERY_COLUMN)
+
+# How long the server waits for the trailer once the payload is in. Short on
+# purpose: the device sends it immediately after the last frame, and every
+# millisecond here is a millisecond the device spends waiting for its config.
+TRAILER_GRACE_SEC = 1.0
+
+# Once two bytes have arrived, how long to keep listening for the other five
+# before concluding the device is on the firmware that ends with a battery.
+LEGACY_TRAILER_SETTLE_SEC = 0.25
 from app_state import AppState, ConnectionEntry
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -155,6 +166,48 @@ def recv_exact(conn, n: int) -> bytes:
     return b''.join(chunks)
 
 
+def read_trailer(conn, ip):
+    """Read the 7-byte trailer, or the 2-byte one older firmware still sends.
+
+    A fleet is reflashed one sensor at a time, so both lengths arrive at the same
+    server for weeks. Waiting for seven bytes from a device that only ever sends
+    two would cost the whole read timeout on every capture, so what arrives in a
+    short window is taken as what was sent — and then it must be exactly one of
+    the two sizes. Anything else means the framing broke, and is refused rather
+    than read as a battery that is really payload.
+    """
+    deadline = time.monotonic() + TRAILER_GRACE_SEC
+    received = b''
+    while len(received) < TRAILER_SIZE:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        conn.settimeout(remaining)
+        try:
+            chunk = conn.recv(TRAILER_SIZE - len(received))
+        except (socket.timeout, ConnectionError):
+            break
+        if not chunk:
+            break
+        received += chunk
+        if len(received) == LEGACY_TRAILER_SIZE:
+            # An old device has said everything it is going to say. Waiting out
+            # the rest of the window would delay its config by that much, every
+            # single capture.
+            deadline = min(deadline, time.monotonic() + LEGACY_TRAILER_SETTLE_SEC)
+
+    conn.settimeout(CLIENT_TIMEOUT_SEC)
+
+    if not received:
+        logging.warning(f"Trailer nao recebido de {ip}: sem bateria, sem versao.")
+        return None
+    try:
+        return parse_trailer(received)
+    except ValueError as broken:
+        logging.warning(f"Trailer invalido de {ip}: {broken}")
+        return None
+
+
 def handle_client(conn, addr, state: AppState):
     """Handle one ESP32 connection from start to finish.
 
@@ -220,14 +273,12 @@ def handle_client(conn, addr, state: AppState):
             start = i * SAMPLE_SIZE_BYTES
             samples.append(parse_sample(payload[start:start + SAMPLE_SIZE_BYTES]))
 
-        # Battery is the last thing on the wire. Losing it must not cost the
-        # device its config — same degradation as the production server.
-        try:
-            battery_mv = int.from_bytes(
-                recv_exact(conn, BATTERY_SIZE_BYTES), byteorder='little')
-        except (ConnectionError, socket.timeout):
-            battery_mv = BATTERY_INVALID
-            logging.warning(f"Battery reading not received from {addr[0]}")
+        # The trailer is the last thing on the wire: battery, and — from firmware
+        # that carries it — the version running and the rate the sensor actually
+        # achieved. Losing it must not cost the device its config, which is the
+        # degradation the production server has always had for a missing battery.
+        trailer = read_trailer(conn, addr[0])
+        battery_mv = trailer.battery_mv if trailer else BATTERY_INVALID
 
         # Append battery reading to every sample row
         for s in samples:
@@ -273,6 +324,8 @@ def handle_client(conn, addr, state: AppState):
                 n_samples=len(samples),
                 battery_mv=battery_mv,
                 ota_sent=ota,
+                firmware=trailer.firmware if trailer else None,
+                effective_hz=trailer.effective_hz if trailer else None,
             ))
 
     except socket.timeout:

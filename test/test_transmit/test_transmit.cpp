@@ -165,13 +165,13 @@ static void test_transmit_writes_header_then_samples_then_battery(void)
     FixedBattery battery(0x0BB8);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     TEST_ASSERT_TRUE(out.opened);
     TEST_ASSERT_TRUE(out.fullyWritten);
 
     const uint32_t payload = 2 * SAMPLE_SIZE_BYTES;
-    TEST_ASSERT_EQUAL_UINT32(HEADER_SIZE_BYTES + payload + BATTERY_SIZE_BYTES,
+    TEST_ASSERT_EQUAL_UINT32(HEADER_SIZE_BYTES + payload + TRAILER_SIZE_BYTES,
                              transport.capturedLen());
 
     const uint8_t *w = transport.captured();
@@ -193,7 +193,7 @@ static void test_header_is_total_sample_bytes_little_endian(void)
     FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    upload_acquisition(transport, "host", 12345, ring, battery, config);
+    upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     const uint32_t payload = 3 * SAMPLE_SIZE_BYTES; // 54
     const uint8_t *w = transport.captured();
@@ -216,7 +216,7 @@ static void test_transmit_sends_oldest_first_when_the_ring_has_wrapped(void)
     FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
     TEST_ASSERT_TRUE(out.fullyWritten);
 
     const uint8_t *w = transport.captured() + HEADER_SIZE_BYTES;
@@ -245,7 +245,7 @@ static void test_config_is_applied_only_when_ten_bytes_arrive(void)
     FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     TEST_ASSERT_FALSE(out.configReceived);
     TEST_ASSERT_EQUAL_UINT16(DEFAULT_SLEEP_TIME_MIN, config.sleep_time_min);
@@ -266,7 +266,7 @@ static void test_config_is_applied_when_all_ten_bytes_arrive(void)
     FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     TEST_ASSERT_TRUE(out.configReceived);
     TEST_ASSERT_EQUAL_UINT16(240, config.sleep_time_min);
@@ -286,7 +286,7 @@ static void test_transmit_reports_failure_on_short_write(void)
     FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     TEST_ASSERT_TRUE(out.opened);
     TEST_ASSERT_FALSE(out.fullyWritten);
@@ -306,7 +306,7 @@ static void test_ring_is_preserved_when_the_connection_never_opened(void)
     FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     TEST_ASSERT_FALSE(out.opened);
     TEST_ASSERT_EQUAL_UINT32(0, transport.capturedLen());
@@ -333,7 +333,7 @@ static void test_ring_is_cleared_once_the_connection_opened_even_if_the_write_fa
     FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     TEST_ASSERT_TRUE(out.opened);
     TEST_ASSERT_FALSE(out.fullyWritten);
@@ -354,7 +354,7 @@ static void test_missing_response_leaves_the_config_but_not_the_data(void)
     FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     TEST_ASSERT_TRUE(out.fullyWritten);
     TEST_ASSERT_FALSE(out.configReceived);
@@ -386,7 +386,7 @@ static void test_a_partial_upload_does_not_apply_a_config(void)
     FixedBattery battery(0);
     ServerConfig config = default_server_config();
 
-    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, config);
+    UploadOutcome out = upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     TEST_ASSERT_TRUE(out.opened);
     TEST_ASSERT_FALSE(out.fullyWritten);
@@ -405,7 +405,7 @@ static void test_a_partial_upload_does_not_apply_a_config(void)
     // wire, because both versions put zero battery bytes on a dead connection; what
     // it buys is that the config-after-partial path no longer depends on the
     // transport behaving the way TCP does.
-    TEST_ASSERT_FALSE(transport.sawWriteOfSize(BATTERY_SIZE_BYTES));
+    TEST_ASSERT_FALSE(transport.sawWriteOfSize(TRAILER_SIZE_BYTES));
     TEST_ASSERT_EQUAL_UINT32(HEADER_SIZE_BYTES + SAMPLE_SIZE_BYTES, transport.capturedLen());
 
     // The ring is still cleared — that part IS production (main.cpp:264-265 sits
@@ -443,7 +443,7 @@ static void test_battery_is_sampled_after_the_payload_and_before_its_own_write(v
     RecordingBattery battery(transport, 0x0BB8);
     ServerConfig config = default_server_config();
 
-    upload_acquisition(transport, "host", 12345, ring, battery, config);
+    upload_acquisition(transport, "host", 12345, ring, battery, 199, config);
 
     // Header and all three frames accepted; the battery's own two bytes not yet.
     TEST_ASSERT_EQUAL_UINT32(HEADER_SIZE_BYTES + 3 * SAMPLE_SIZE_BYTES,

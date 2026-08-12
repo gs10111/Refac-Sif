@@ -1,8 +1,23 @@
 import struct
+from dataclasses import dataclass
 
 SAMPLE_SIZE_BYTES  = 18
 HEADER_SIZE_BYTES  =  4
 BATTERY_SIZE_BYTES =  2
+
+# Uplink trailer, sent once when a capture ends:
+#   [0-1] battery_mv    uint16 LE   — where the 2-byte trailer always had it
+#   [2]   fw major      uint8
+#   [3]   fw minor      uint8
+#   [4]   fw patch      uint8
+#   [5-6] effective_hz  uint16 LE   — MEASURED, not the rate the server asked for
+#
+# Exactly 7 or exactly 2. A trailer of any other length means the framing broke,
+# and reading it anyway would turn shifted payload bytes into a battery reading
+# and a firmware version — numbers that look like data and are not.
+TRAILER_STRUCT      = struct.Struct('<H3BH')
+TRAILER_SIZE        = TRAILER_STRUCT.size          # 7
+LEGACY_TRAILER_SIZE = BATTERY_SIZE_BYTES           # 2
 SERVER_CONFIG_SIZE = 12  # 6 × uint16_t
 
 # ODR nibble of ACCEL_CONFIG0 / GYRO_CONFIG0 on the ICM-42688-P, keyed by the
@@ -40,6 +55,28 @@ UINT16_MAX = 65535
 SAMPLE_COLUMNS = ['timestamp', 'x_data', 'x_gyro', 'y_data', 'y_gyro', 'z_data', 'z_gyro', 'temp']
 BATTERY_COLUMN = 'battery_voltage'
 CSV_COLUMNS    = SAMPLE_COLUMNS + [BATTERY_COLUMN]
+
+@dataclass
+class Trailer:
+    """What the sensor said about itself at the end of a capture."""
+    battery_mv:   int
+    firmware:     str | None   # None from a device on the old firmware
+    effective_hz: int | None   # the rate ACHIEVED, not the one configured
+    legacy:       bool
+
+
+def parse_trailer(raw: bytes) -> Trailer:
+    """Read a 7-byte trailer, or the 2-byte one older firmware still sends."""
+    if len(raw) == TRAILER_SIZE:
+        battery, major, minor, patch, hz = TRAILER_STRUCT.unpack(raw)
+        return Trailer(battery, f'{major}.{minor}.{patch}', hz, False)
+    if len(raw) == LEGACY_TRAILER_SIZE:
+        return Trailer(int.from_bytes(raw, 'little'), None, None, True)
+    raise ValueError(
+        f'Trailer com {len(raw)} bytes: esperados {TRAILER_SIZE} (atual) '
+        f'ou {LEGACY_TRAILER_SIZE} (legado). O enquadramento quebrou.'
+    )
+
 
 def parse_sample(raw: bytes) -> list:
     timestamp = int.from_bytes(raw[:4], byteorder='little')

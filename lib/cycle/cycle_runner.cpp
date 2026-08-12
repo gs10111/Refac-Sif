@@ -28,14 +28,24 @@ CycleOutcome CycleRunner::runIteration(const NetworkConfig &network, ServerConfi
     SIF_LOG("Coletando dados"); // main.cpp:166, verbatim
     SIF_TIMER(acquisitionStart);
 
-    _acq.beginAcquisition(_clock.millis());
+    // Measured with the injected clock, not with the log macros: SIF_TIMER
+    // compiles to nothing off-target, and this number now leaves the device.
+    const uint32_t acquisitionStartMs = _clock.millis();
+    _acq.beginAcquisition(acquisitionStartMs);
 
     AcquisitionResult result;
+    uint32_t lastNow = acquisitionStartMs;
     do
     {
         const uint32_t now = _clock.millis();
+        lastNow = now;
         result = _acq.step(now, _trigger.poll(_pin.read(), now));
     } while (result == ACQ_RUNNING);
+
+    // What the sensor ACHIEVED, not what it was told to run: frames actually
+    // stored over the span they were stored in. The server has never had this.
+    const uint16_t achievedHz = effective_hz(
+        _ring.bytesStored() / SAMPLE_SIZE_BYTES, lastNow - acquisitionStartMs);
 
     SIF_LOG(SIF_ELAPSED(acquisitionStart)); // main.cpp:180, elapsed ms
 
@@ -57,7 +67,8 @@ CycleOutcome CycleRunner::runIteration(const NetworkConfig &network, ServerConfi
             ServerConfig received = config;
 
             const UploadOutcome upload = upload_acquisition(
-                _transport, network.host, network.port, _ring, _battery, received);
+                _transport, network.host, network.port, _ring, _battery,
+                achievedHz, received);
 
             if (upload.configReceived)
             {

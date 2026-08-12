@@ -295,7 +295,8 @@ static void test_the_radio_is_turned_off_after_a_successful_iteration(void)
 
     TEST_ASSERT_FALSE(outcome.idleTimedOut);
     TEST_ASSERT_TRUE(log.contains("tcp.write"));
-    // Header + every frame the ring held + battery. Derived from kHighReads,
+    // Header + every frame the ring held + the 7-byte trailer. Derived from
+    // kHighReads,
     // not from a number read off a previous run.
     //
     // This assertion is stronger than the bool it replaced on DETECTION and weaker
@@ -305,7 +306,7 @@ static void test_the_radio_is_turned_off_after_a_successful_iteration(void)
     // fails FALSE POSITIVE, loudly, on the next run. Do not swap it back for a bool
     // the next time it breaks.
     TEST_ASSERT_EQUAL_UINT32(HEADER_SIZE_BYTES + kHighReads * SAMPLE_SIZE_BYTES +
-                                 BATTERY_SIZE_BYTES,
+                                 TRAILER_SIZE_BYTES,
                              transport.bytesWritten());
     TEST_ASSERT_TRUE(log.contains("radio.off"));
 }

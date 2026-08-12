@@ -61,7 +61,10 @@ def make_recv_sequence(n_samples: int = 1, extra_bytes: int = 0):
     body   = bytes(SAMPLE_SIZE_BYTES * n_samples + extra_bytes)
     header = len(body).to_bytes(HEADER_SIZE_BYTES, 'little')
     batt   = BATTERY_MV.to_bytes(BATTERY_SIZE_BYTES, 'little')
-    return [header, body, batt]
+    # The trailing b'' is the peer closing: the trailer read waits for seven
+    # bytes and stops early when the device has nothing more to say, which is
+    # exactly what a device on the two-byte firmware does.
+    return [header, body, batt, b'']
 
 
 def exchange(state, ip='10.0.0.1', n_samples=1):
@@ -185,9 +188,9 @@ def test_handle_client_discards_trailing_partial_frame_legacy_firmware_compat():
 def test_handle_client_reassembles_split_header():
     """B2: a header split across two recv calls must still be read whole."""
     state  = AppState()
-    header, body, batt = make_recv_sequence(n_samples=2)
+    header, body, batt, *_ = make_recv_sequence(n_samples=2)
     conn   = MagicMock()
-    conn.recv.side_effect = [header[:1], header[1:], body, batt]
+    conn.recv.side_effect = [header[:1], header[1:], body, batt, b'']
 
     handle_client(conn, ('10.0.0.1', 5000), state)
 
@@ -197,9 +200,9 @@ def test_handle_client_reassembles_split_header():
 
 def test_handle_client_reassembles_chunked_payload():
     state  = AppState()
-    header, body, batt = make_recv_sequence(n_samples=4)
+    header, body, batt, *_ = make_recv_sequence(n_samples=4)
     conn   = MagicMock()
-    conn.recv.side_effect = [header, body[:10], body[10:25], body[25:], batt]
+    conn.recv.side_effect = [header, body[:10], body[10:25], body[25:], batt, b'']
 
     handle_client(conn, ('10.0.0.1', 5000), state)
 
@@ -212,7 +215,7 @@ def test_handle_client_handles_empty_payload():
     header = (0).to_bytes(HEADER_SIZE_BYTES, 'little')
     batt   = BATTERY_MV.to_bytes(BATTERY_SIZE_BYTES, 'little')
     conn   = MagicMock()
-    conn.recv.side_effect = [header, batt]
+    conn.recv.side_effect = [header, batt, b'']
 
     handle_client(conn, ('10.0.0.1', 5000), state)
 
@@ -288,7 +291,7 @@ def test_missing_battery_is_recorded_as_minus_one():
     """-1 is the production sentinel (win_server.py:105) and the historical CSV
     corpus contains it. Literal, for the same reason as the timeout above."""
     state  = AppState()
-    header, body, _ = make_recv_sequence(n_samples=1)
+    header, body, *_ = make_recv_sequence(n_samples=1)
     conn   = MagicMock()
     conn.recv.side_effect = [header, body, b'']
 
@@ -318,7 +321,7 @@ def test_handle_client_sends_config_when_battery_is_missing():
     """The device dropped the link on the last two bytes — it still gets told
     how long to sleep, exactly as the production server does."""
     state  = AppState()
-    header, body, _ = make_recv_sequence(n_samples=2)
+    header, body, *_ = make_recv_sequence(n_samples=2)
     conn   = MagicMock()
     conn.recv.side_effect = [header, body, b'']
 
@@ -329,7 +332,7 @@ def test_handle_client_sends_config_when_battery_is_missing():
 
 def test_handle_client_logs_invalid_battery_when_battery_is_missing():
     state  = AppState()
-    header, body, _ = make_recv_sequence(n_samples=2)
+    header, body, *_ = make_recv_sequence(n_samples=2)
     conn   = MagicMock()
     conn.recv.side_effect = [header, body, b'']
 
@@ -340,7 +343,7 @@ def test_handle_client_logs_invalid_battery_when_battery_is_missing():
 
 def test_handle_client_sends_config_when_battery_times_out():
     state  = AppState()
-    header, body, _ = make_recv_sequence(n_samples=2)
+    header, body, *_ = make_recv_sequence(n_samples=2)
     conn   = MagicMock()
     conn.recv.side_effect = [header, body, socket.timeout()]
 
@@ -370,7 +373,7 @@ def test_handle_client_queues_rows_with_the_battery_column():
 def test_handle_client_queues_rows_with_invalid_battery_when_battery_is_missing():
     """No ragged CSV: the column is there even when the reading is not."""
     state  = AppState()
-    header, body, _ = make_recv_sequence(n_samples=2)
+    header, body, *_ = make_recv_sequence(n_samples=2)
     conn   = MagicMock()
     conn.recv.side_effect = [header, body, b'']
 
@@ -393,7 +396,7 @@ def test_handle_client_queues_nothing_when_payload_is_truncated():
     passing against a broken helper and guards nothing.
     """
     state  = AppState()
-    header, body, _ = make_recv_sequence(n_samples=4)
+    header, body, *_ = make_recv_sequence(n_samples=4)
     conn   = MagicMock()
     conn.recv.side_effect = [header, body[:20], b'']
 
@@ -413,7 +416,7 @@ def test_handle_client_queues_nothing_when_payload_is_truncated():
 
 def truncated_exchange(state, ip='10.0.0.4', n_samples=4):
     """Header promises n_samples frames; the peer vanishes mid-payload."""
-    header, body, _ = make_recv_sequence(n_samples=n_samples)
+    header, body, *_ = make_recv_sequence(n_samples=n_samples)
     conn = MagicMock()
     conn.recv.side_effect = [header, body[:20], b'']
     handle_client(conn, (ip, 5000), state)

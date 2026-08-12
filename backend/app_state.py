@@ -45,6 +45,10 @@ class ConnectionEntry:
     n_samples:  int
     battery_mv: int
     ota_sent:   bool = False   # this device received update=1
+    # From the 7-byte trailer. None means a device still on firmware that ends
+    # its message with two bytes of battery — not a device that failed to say.
+    firmware:     str | None = None
+    effective_hz: int | None = None
     complete:   bool = True    # the promised payload arrived; False means it did not
                                # and the device has already discarded it
 

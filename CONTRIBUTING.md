@@ -14,7 +14,7 @@
 2. **TDD, com o vermelho observado.** Teste antes da implementação, provando o critério de aceite da
    spec — não algo parecido.
    - Firmware: `~/.platformio/penv/bin/pio test -e native` (91 casos)
-   - Backend: `backend/venv/bin/python -m pytest -q` (245 testes, ~15 s)
+   - Backend: `backend/venv/bin/python -m pytest -q` (259 testes, ~16 s)
    - Gateway: `backend/venv/bin/python -m pytest gateway -q` (11 testes; rodam sem broker e sem o thingsboard-gateway instalado)
    - Prova de que o teste **detecta**, não só passa: `pio test -e mutant_<nome>` — ali a **falha é a
      condição de sucesso** (`platformio.ini`, envs `mutant_*`; racional em `test/README.md`).
@@ -46,7 +46,7 @@
 |---|---|
 | credencial WiFi, senha do SoftAP de OTA, segredo em `Preferences`, arquivo git-ignored de credencial (DEC-2) | **Security** + **QA** |
 | `platformio.ini`, `.github/**` (quando existir), bind/porta do backend (`SERVER_IP`, `SERVER_PORT`, `WEB_PORT`, `SIF_MQTT_*`), `gateway/**`, provisionamento, deploy | **SRE** + **Security** |
-| wire contract (`[4 B total][N × 18 B][2 B bateria]`, config de 12 B), `struct ServerConfig`, códigos ODR, colunas do CSV, `stage`/`RTC_DATA_ATTR` | **Architect** + **QA** |
+| wire contract (`[4 B total][N × 18 B][7 B trailer]`, config de 12 B), `struct ServerConfig`, códigos ODR, colunas do CSV, `stage`/`RTC_DATA_ATTR` | **Architect** + **QA** |
 | `test/**`, `backend/tests/**`, envs `mutant_*` | **QA** |
 | `backend/store/**` e o schema do SQLite da configuração | **Architect** + **QA** |
 

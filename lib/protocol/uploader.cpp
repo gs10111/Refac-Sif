@@ -39,6 +39,7 @@ UploadOutcome upload_acquisition(ITransport &transport,
                                  uint16_t port,
                                  RingBuffer &ring,
                                  IBatterySense &battery,
+                                 uint16_t effectiveHz,
                                  ServerConfig &configOut)
 {
     UploadOutcome outcome = {false, false, false};
@@ -137,16 +138,17 @@ UploadOutcome upload_acquisition(ITransport &transport,
     }
 
 
-    uint8_t batteryBytes[BATTERY_SIZE_BYTES];
+    uint8_t trailer[TRAILER_SIZE_BYTES];
 #ifndef MUTANT_BATTERY_READ_BEFORE_UPLOAD
     // main.cpp:259 — after the send loop has closed, radio hot, cell under load.
     const uint16_t batteryMv = battery.readMv();
 #endif
-    batteryBytes[0] = (uint8_t)(batteryMv & 0xFF);
-    batteryBytes[1] = (uint8_t)((batteryMv >> 8) & 0xFF);
+    // Battery first, so a server reading only two bytes still finds it where it
+    // has always been; version and measured rate follow.
+    pack_trailer_for_this_build(trailer, batteryMv, effectiveHz);
 
-    outcome.fullyWritten = ok && write_all(transport, batteryBytes,
-                                           BATTERY_SIZE_BYTES, &accepted);
+    outcome.fullyWritten = ok && write_all(transport, trailer,
+                                           TRAILER_SIZE_BYTES, &accepted);
     const uint32_t writeMs = SIF_ELAPSED(writeStart);
 
     // Unconditional, and that is production: the reset at main.cpp:264-265 sits
@@ -165,7 +167,7 @@ UploadOutcome upload_acquisition(ITransport &transport,
     // believes it transmitted and a server that received nothing disagree
     // somewhere, and this is the last number on our side of the disagreement.
     SIF_LOGF("Escrita: %u de %u bytes aceitos em %u ms (%.2f kbps)\n",
-             (unsigned)accepted, (unsigned)(total + HEADER_SIZE_BYTES + BATTERY_SIZE_BYTES),
+             (unsigned)accepted, (unsigned)(total + HEADER_SIZE_BYTES + TRAILER_SIZE_BYTES),
              (unsigned)writeMs, kbps_from(accepted, writeMs));
 #endif
 

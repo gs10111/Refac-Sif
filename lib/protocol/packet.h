@@ -6,7 +6,27 @@
 // Wire format constants
 #define SAMPLE_SIZE_BYTES    18
 #define HEADER_SIZE_BYTES     4   // uint32_t total_bytes sent before data
-#define BATTERY_SIZE_BYTES    2   // uint16_t sent after all samples
+#define BATTERY_SIZE_BYTES    2   // uint16_t battery, the first field of the trailer
+
+// Uplink trailer — 7 bytes, sent once when the capture ends:
+//   [0-1] battery_mv     uint16 LE   (where the 2-byte trailer always had it)
+//   [2]   fw major       uint8
+//   [3]   fw minor       uint8
+//   [4]   fw patch       uint8
+//   [5-6] effective_hz   uint16 LE   (MEASURED, not the rate that was asked for)
+//
+// The battery keeps its offsets, so a server reading only the first two bytes
+// still finds it. The server accepts exactly 7 or exactly 2 — never a size in
+// between, because a trailer of another length means the framing broke, not that
+// a field is missing.
+#define TRAILER_SIZE_BYTES         7
+#define LEGACY_TRAILER_SIZE_BYTES  2
+
+// Firmware version. One source: the trailer and the /version endpoint both read
+// it from here, so they cannot disagree about what a device is running.
+#define SIF_FW_VERSION_MAJOR 1
+#define SIF_FW_VERSION_MINOR 1
+#define SIF_FW_VERSION_PATCH 0
 
 #define FRAME_TIMESTAMP_BYTES 4   // leading uint32_t of every sample frame
 
@@ -69,6 +89,21 @@ bool is_valid_sampling_code(uint16_t code);
 // The code to actually run, given whatever was stored. Anything unusable —
 // never written, corrupt, a rate the part cannot do — reads as 50 Hz.
 uint8_t sampling_code_or_default(uint16_t stored);
+
+// Fill TRAILER_SIZE_BYTES bytes with the trailer, little-endian, no padding —
+// the struct layout is the wire layout and nothing here is memcpy'd over one.
+void pack_trailer(uint8_t *out, uint16_t batteryMv,
+                  uint8_t major, uint8_t minor, uint8_t patch,
+                  uint16_t effectiveHz);
+
+// The same, with the version this build carries.
+void pack_trailer_for_this_build(uint8_t *out, uint16_t batteryMv,
+                                 uint16_t effectiveHz);
+
+// Frames per second actually achieved, rounded, clamped to the uint16 the field
+// is. Zero frames or a capture with no measurable duration report 0 — the honest
+// answer, where a division would report infinity or crash.
+uint16_t effective_hz(uint32_t frames, uint32_t elapsedMs);
 
 // Decode a server response frame. Requires the full 12 bytes; leaves `out`
 // untouched when the frame is short, so neither a truncated response nor a
