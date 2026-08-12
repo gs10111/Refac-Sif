@@ -58,10 +58,10 @@ uint32_t TcpClient::readExact(uint8_t *out, uint32_t len, uint32_t timeoutMs)
 
 void TcpClient::close()
 {
-    // Said out loud because a socket already dead here means the peer hung up
-    // before we finished — which looks, from the server, like a device that
-    // connected and sent nothing.
-    if (!_client.connected())
-        Serial.println("Socket ja estava fechado antes do stop().");
+    // No print here. The server closes the connection as soon as it has sent the
+    // config, so by the time we get here the socket is legitimately closed on
+    // every successful cycle — the warning fired every time and taught the reader
+    // to skip it. A socket that dies EARLY is still reported, by the short-write
+    // line above, which is the case that actually means something.
     _client.stop();
 }

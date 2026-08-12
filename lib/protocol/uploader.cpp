@@ -195,10 +195,13 @@ UploadOutcome upload_acquisition(ITransport &transport,
 
     if (outcome.configReceived)
     {
-        SIF_LOGF("Recebido do servidor: %u, %u, %u, %u, %u\n", // main.cpp:281
+        // Six fields, not five: the rate was added to the frame and the log kept
+        // printing the old five, so the one field an operator had just changed on
+        // the page was the one they could not see arrive.
+        SIF_LOGF("Recebido do servidor: %u, %u, %u, %u, %u, taxa %u\n", // main.cpp:281
                  configOut.sleep_time_min, configOut.idle_timeout_min,
                  configOut.max_acquisitions, configOut.trigger_cooldown_sec,
-                 configOut.update);
+                 configOut.update, configOut.sampling_code);
     }
     else if (received > 0)
     {
