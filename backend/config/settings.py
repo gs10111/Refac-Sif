@@ -40,6 +40,15 @@ HISTORY_MAX_CONNECTIONS = 500
 SAMPLING_HZ   = os.getenv('SIF_SAMPLING_HZ', '').strip() or DEFAULT_SAMPLING_HZ
 SAMPLING_CODE = sampling_code_from_hz(SAMPLING_HZ)
 
+# Where the fleet configuration lives. It is written by the page and read by the
+# TCP threads once per connection, so a change reaches the next device that
+# transmits instead of waiting for a restart.
+#
+# Always on: a path that cannot be opened raises at boot rather than silently
+# falling back to memory, because falling back would mean the operator's saved
+# configuration disappears at the next restart without anyone being told.
+DB_PATH = os.getenv('SIF_DB_PATH', '').strip() or 'sif.db'
+
 # --- MQTT / ThingsBoard -----------------------------------------------------
 # Publishing is off until asked for: a server that has never been pointed at a
 # broker must not try to reach one. Once asked for, an incomplete configuration

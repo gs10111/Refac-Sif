@@ -54,11 +54,21 @@ cópia para o Drive continuam iguais — a publicação é adição ao caminho d
 gravação, nunca portão na frente dele. Ligado sem host, o servidor não sobe.
 Detalhes, tópicos e instalação: [`gateway/README.md`](../gateway/README.md).
 
+### Onde a configuração fica guardada
+
+`SIF_DB_PATH` (padrão `sif.db`, no diretório de onde o servidor sobe) é o SQLite
+com a configuração da frota. Ele é lido **por conexão**, então o que se salva na
+página vale para o próximo sensor que transmitir, sem reiniciar nada. Um caminho
+que não possa ser aberto derruba o servidor no boot: cair para memória em
+silêncio faria a configuração salva sumir no restart seguinte, sem avisar
+ninguém.
+
 ### Taxa de amostragem da frota
 
-`SIF_SAMPLING_HZ` escolhe a taxa que o servidor manda para todo sensor que
-conectar: `200`, `100`, `50`, `25` ou `12.5`. O padrão é `50`, a taxa que a
-frota rodava antes de a taxa ser configurável.
+A taxa se troca **pela página** (bloco *Taxa de amostragem*). `SIF_SAMPLING_HZ`
+continua existindo e define o valor de um banco **novo**: `200`, `100`, `50`,
+`25` ou `12.5`, padrão `50`. Uma vez que o banco exista, quem manda é o que está
+nele — a variável não sobrescreve o que o operador salvou.
 
 ```bash
 SIF_SAMPLING_HZ=200 python -m server.tcp_server
@@ -104,7 +114,9 @@ Edite os 4 parâmetros e clique **SALVAR**. O ESP32 receberá os novos valores n
 
 Os quatro são inteiros de 1 a 65535 — é a largura do campo no protocolo, não uma escolha nossa. Valor recusado devolve uma mensagem por campo dizendo qual é e por quê, e **nenhum** valor é gravado enquanto houver um errado.
 
-O bloco **Atualizacao OTA**, logo abaixo, é independente do SALVAR: salvar a configuração nunca arma nem desarma o OTA. Ver a seção adiante.
+O bloco **Taxa de amostragem**, logo abaixo, mostra em que taxa a frota está e troca-a por um seletor (200, 100, 50, 25 ou 12,5 Hz). Tem rota própria (`POST /sampling`) pelo mesmo motivo do OTA: um SALVAR distraído não pode re-taxar a planta inteira. Cada sensor grava a taxa nova e a adota **no boot seguinte** — a captura em curso termina na taxa antiga.
+
+O bloco **Atualizacao OTA**, mais abaixo, também é independente do SALVAR: salvar a configuração nunca arma nem desarma o OTA. Ver a seção adiante.
 
 **Painel direito — Últimas Conexões**
 
@@ -112,7 +124,7 @@ Exibe as últimas 500 conexões dos dispositivos: IP, horário, número de amost
 
 A linha que levou o OTA fica destacada (fundo avermelhado, borda à esquerda) e recebe o selo **OTA**. É o único registro de qual sensor está prestes a reiniciar em modo Access Point — vale anotar o IP antes de sair da mesa.
 
-> **Nota:** a configuração é mantida em memória. Se o servidor reiniciar, os valores voltam ao padrão e o OTA volta desarmado.
+> **O que sobrevive a um restart:** a **configuração** (os quatro campos e a taxa) fica em SQLite e volta igual. O **histórico de conexões** e o **armamento do OTA** continuam em memória — reiniciou, histórico vazio e OTA desarmado.
 
 ---
 
@@ -168,7 +180,7 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-196 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
+221 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
 
 ---
 

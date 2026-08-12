@@ -21,3 +21,9 @@ gateway/tb_gateway.json
 gateway/.env
 gateway/ca.pem
 gateway/gw-config/
+
+# Banco da configuração da frota (e os arquivos WAL/SHM que o SQLite cria ao
+# lado). É estado de instalação, não de código. Ver backend/store/config_store.py
+sif.db
+sif.db-wal
+sif.db-shm

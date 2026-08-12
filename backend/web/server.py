@@ -7,7 +7,9 @@ from app_state import AppState
 # Imported as a module, not `from config.settings import WEB_PORT`: read at call
 # time the setting can be replaced in a test without reloading every importer.
 from config import settings
-from protocol.packet import UINT16_MAX
+from protocol.packet import (
+    SAMPLING_CODES, UINT16_MAX, sampling_code_from_hz, sampling_hz_from_code,
+)
 
 # Fixed order — the error message lists offenders in form order, never in dict
 # iteration order, so the same bad input always produces the same message.
@@ -63,6 +65,8 @@ def create_app(state: AppState) -> Flask:
         page = make_response(render_template(
             'index.html', config=config, connections=connections,
             ota_armed=ota_armed, last_ota=last_ota,
+            sampling_hz=sampling_hz_from_code(config.sampling_code),
+            sampling_options=list(SAMPLING_CODES),
         ))
         # The page is the operator's only instrument: a cached render showing
         # a stale arming state is worse than no page at all.
@@ -85,6 +89,30 @@ def create_app(state: AppState) -> Flask:
         state.set_ota_armed(armed == '1')
         return redirect('/', 303)
 
+    @app.route('/sampling', methods=['POST'])
+    def update_sampling():
+        """Change the acquisition rate of the whole fleet.
+
+        A route of its own, like /ota and for the same reason: this one save
+        re-rates every sensor in the plant, and it must never ride along with a
+        distracted save of an unrelated field.
+        """
+        raw = request.form.get('sampling_hz')
+        if raw is None:
+            return Response(
+                'sampling_hz: campo ausente. Use uma das taxas: '
+                + ', '.join(SAMPLING_CODES) + '.',
+                status=400, mimetype='text/plain',
+            )
+
+        try:
+            code = sampling_code_from_hz(raw)
+        except ValueError as invalid:
+            return Response(str(invalid), status=400, mimetype='text/plain')
+
+        state.update_config(sampling_code=code)
+        return redirect('/', 303)
+
     @app.route('/config', methods=['POST'])
     def update_config():
         values, errors = validate_config_form(request.form)
@@ -93,11 +121,12 @@ def create_app(state: AppState) -> Flask:
             # config is one no operator ever chose, shown as if they had.
             return Response('\n'.join(errors), status=400, mimetype='text/plain')
 
-        with state.lock:
-            state.config.sleep_min    = values['sleep_min']
-            state.config.idle_min     = values['idle_min']
-            state.config.max_acq      = values['max_acq']
-            state.config.cooldown_sec = values['cooldown_sec']
+        # The rate is deliberately absent from this call: saving the duty cycle
+        # must not re-rate the fleet. See update_sampling above.
+        state.update_config(
+            sleep_min=values['sleep_min'], idle_min=values['idle_min'],
+            max_acq=values['max_acq'], cooldown_sec=values['cooldown_sec'],
+        )
 
         return redirect('/', 303)
 
