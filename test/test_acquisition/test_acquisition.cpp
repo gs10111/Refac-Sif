@@ -316,6 +316,7 @@ static void test_begin_acquisition_never_wakes_the_imu(void)
     RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
     AcquisitionService acq(imu, ring);
     acq.setConfig(defaults());
+    acq.markSamplingApplied(defaults().sampling_code);   // as App::begin does
 
     acq.beginAcquisition(0);
     acq.step(1, TRIGGER_EVENT_STOP);
@@ -323,6 +324,8 @@ static void test_begin_acquisition_never_wakes_the_imu(void)
     acq.step(3, TRIGGER_EVENT_STOP);
     acq.beginAcquisition(4);
 
+    // Production wakes once per boot, and the rate did not change here. The only
+    // wake this service is allowed is the one that writes a NEW ODR nibble.
     TEST_ASSERT_EQUAL_UINT32(0, imu.wakeCalls());
     TEST_ASSERT_EQUAL_UINT32(0, imu.sleepCalls());
 }
@@ -345,7 +348,31 @@ static void test_the_rate_in_force_at_boot_is_not_reapplied(void)
     AcquisitionService acq(imu, ring);
     ServerConfig config = default_server_config();
     acq.setConfig(config);
+    acq.markSamplingApplied(config.sampling_code);
 
+    acq.beginAcquisition(0);
+
+    TEST_ASSERT_EQUAL_UINT32(0, imu.wakeCalls());
+}
+
+static void test_the_rate_the_boot_actually_applied_is_the_one_remembered(void)
+{
+    // The trap this closes: App::begin builds the service with the DEFAULT config
+    // and only afterwards reads the real rate from NVS, applies it and wakes the
+    // part. A service that assumed "the first config I saw is what the sensor is
+    // running" would then believe 50 Hz while the sensor ran 200, and would wake
+    // it again — once per boot, for nothing — the first time the server echoed
+    // the rate already in force.
+    FakeImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    ServerConfig config = default_server_config();      // 50 Hz, as App does first
+    acq.setConfig(config);
+
+    acq.markSamplingApplied(SAMPLING_CODE_200HZ);        // what App read from NVS
+
+    config.sampling_code = SAMPLING_CODE_200HZ;          // server echoes it back
+    acq.setConfig(config);
     acq.beginAcquisition(0);
 
     TEST_ASSERT_EQUAL_UINT32(0, imu.wakeCalls());
@@ -358,6 +385,7 @@ static void test_a_new_rate_reaches_the_sensor_on_the_next_acquisition(void)
     AcquisitionService acq(imu, ring);
     ServerConfig config = default_server_config();
     acq.setConfig(config);
+    acq.markSamplingApplied(config.sampling_code);
     acq.beginAcquisition(0);
 
     config.sampling_code = SAMPLING_CODE_200HZ;   // the server answered mid-cycle
@@ -380,6 +408,7 @@ static void test_the_same_rate_arriving_again_costs_nothing(void)
     ServerConfig config = default_server_config();
     config.sampling_code = SAMPLING_CODE_200HZ;
     acq.setConfig(config);
+    acq.markSamplingApplied(config.sampling_code);
     acq.beginAcquisition(0);
     const uint32_t after_first = imu.wakeCalls();
 
@@ -398,6 +427,7 @@ static void test_changing_another_field_does_not_re_rate_the_sensor(void)
     AcquisitionService acq(imu, ring);
     ServerConfig config = default_server_config();
     acq.setConfig(config);
+    acq.markSamplingApplied(config.sampling_code);
     acq.beginAcquisition(0);
 
     config.sleep_time_min = 99;                   // duty cycle changed, rate did not
@@ -422,6 +452,7 @@ static int run_all(void)
     RUN_TEST(test_stored_frame_is_18_bytes_in_wire_order);
     RUN_TEST(test_frame_timestamp_is_the_one_passed_to_step);
     RUN_TEST(test_the_rate_in_force_at_boot_is_not_reapplied);
+    RUN_TEST(test_the_rate_the_boot_actually_applied_is_the_one_remembered);
     RUN_TEST(test_a_new_rate_reaches_the_sensor_on_the_next_acquisition);
     RUN_TEST(test_the_same_rate_arriving_again_costs_nothing);
     RUN_TEST(test_changing_another_field_does_not_re_rate_the_sensor);

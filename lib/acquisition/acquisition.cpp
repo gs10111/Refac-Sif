@@ -11,16 +11,12 @@ AcquisitionService::AcquisitionService(IImu &imu, RingBuffer &ring)
 
 void AcquisitionService::setConfig(const ServerConfig &config)
 {
-    // The first config of a boot describes what the sensor is ALREADY running:
-    // App::begin read it from NVS, handed it to the IMU and woke the part. Marking
-    // it as applied here is what keeps the first acquisition from waking a radio
-    // and a gyroscope that are already at the right rate.
-    if (!_samplingApplied)
-    {
-        _appliedSamplingCode = config.sampling_code;
-        _samplingApplied = true;
-    }
     _config = config;
+}
+
+void AcquisitionService::markSamplingApplied(uint16_t code)
+{
+    _appliedSamplingCode = code;
 }
 
 void AcquisitionService::beginAcquisition(uint32_t nowMs)

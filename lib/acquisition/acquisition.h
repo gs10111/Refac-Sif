@@ -30,6 +30,12 @@ public:
 
     void setConfig(const ServerConfig &config);
 
+    // What the IMU is ALREADY running, told by whoever configured it — App::begin,
+    // with the rate it read from NVS. Explicit because the alternative was to
+    // assume the first config seen describes the hardware, and it does not: the
+    // service is built with the defaults, before NVS is read.
+    void markSamplingApplied(uint16_t code);
+
     // Starts one acquisition and counts it. Wakes the IMU only when the rate has
     // changed since the last one — see the body. Does not clear the ring.
     void beginAcquisition(uint32_t nowMs);
@@ -49,8 +55,7 @@ public:
     uint32_t bytesCollected() const;
 
 private:
-    uint16_t _appliedSamplingCode = 0;  // what the IMU is actually running
-    bool     _samplingApplied = false;  // the boot config has been seen
+    uint16_t _appliedSamplingCode = 0;  // what the IMU is actually running; 0 = unknown
     IImu &_imu;
     RingBuffer &_ring;
     ServerConfig _config;
