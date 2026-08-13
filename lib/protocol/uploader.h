@@ -39,6 +39,7 @@ UploadOutcome upload_acquisition(ITransport &transport,
                                  uint16_t port,
                                  RingBuffer &ring,
                                  IBatterySense &battery,
+                                 uint16_t effectiveHz,
                                  ServerConfig &configOut);
 
 #endif // UPLOADER_H

@@ -138,7 +138,9 @@ saudável enquanto capturas eram recusadas. As ocorrências ficam **em memória*
 
 **Painel direito — Últimas Conexões**
 
-Exibe as últimas 500 conexões dos dispositivos: IP, horário, número de amostras, tensão da bateria e se aquela conexão levou o comando de OTA.
+Exibe as últimas 500 conexões dos dispositivos: IP, horário, número de amostras, tensão da bateria, **versão de firmware**, **Hz medidos** e se aquela conexão levou o comando de OTA.
+
+As duas colunas novas vêm do trailer de 7 bytes que o sensor manda ao fim da captura. `Hz medidos` é a taxa **atingida**, não a configurada — é com ela que se confirma que uma troca de taxa pegou, sem abrir CSV. Sensor ainda na versão antiga do firmware manda só a bateria e aparece com `—` nas duas.
 
 A linha que levou o OTA fica destacada (fundo avermelhado, borda à esquerda) e recebe o selo **OTA**. É o único registro de qual sensor está prestes a reiniciar em modo Access Point — vale anotar o IP antes de sair da mesa.
 
@@ -198,7 +200,7 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-245 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
+259 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.
 
 ---
 

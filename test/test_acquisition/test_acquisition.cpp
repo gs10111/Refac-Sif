@@ -437,6 +437,73 @@ static void test_changing_another_field_does_not_re_rate_the_sensor(void)
     TEST_ASSERT_EQUAL_UINT32(0, imu.wakeCalls());
 }
 
+// ---------------------------------------------------------------------------
+// Frames counted, not frames surviving
+// ---------------------------------------------------------------------------
+
+static void test_the_frame_count_survives_the_ring_wrapping(void)
+{
+    // The measured rate that goes out in the trailer divides frames by the span
+    // they were taken in. Counting what the ring still HOLDS gets that wrong the
+    // moment the ring wraps: a capture that outruns the buffer would report a
+    // rate as low as the buffer is small — 200 Hz for ten minutes reads as 100.
+    FakeImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    acq.setConfig(defaults());
+    acq.markSamplingApplied(defaults().sampling_code);
+    acq.beginAcquisition(0);
+
+    const uint32_t overrun = kFrames * 2 + 3;
+    for (uint32_t i = 0; i < overrun; i++)
+    {
+        imu.setReady(true);
+        acq.step(1 + i, TRIGGER_EVENT_NONE);
+    }
+
+    TEST_ASSERT_EQUAL_UINT32(kFrames, ring.bytesStored() / SAMPLE_SIZE_BYTES);
+    TEST_ASSERT_EQUAL_UINT32(overrun, acq.framesStored());
+}
+
+static void test_each_acquisition_counts_its_own_frames(void)
+{
+    // Two acquisitions in one wake must not report the second at twice the rate.
+    FakeImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    acq.setConfig(defaults());
+    acq.markSamplingApplied(defaults().sampling_code);
+
+    acq.beginAcquisition(0);
+    imu.setReady(true);
+    acq.step(1, TRIGGER_EVENT_NONE);
+    acq.step(2, TRIGGER_EVENT_NONE);
+
+    acq.beginAcquisition(100);
+    imu.setReady(true);
+    acq.step(101, TRIGGER_EVENT_NONE);
+
+    TEST_ASSERT_EQUAL_UINT32(1, acq.framesStored());
+}
+
+static void test_a_sample_the_sensor_did_not_have_is_not_counted(void)
+{
+    // DATA_RDY clear means there is no sample. Counting the poll would report a
+    // rate that is the loop's, not the sensor's.
+    FakeImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    acq.setConfig(defaults());
+    acq.markSamplingApplied(defaults().sampling_code);
+    acq.beginAcquisition(0);
+
+    imu.setReady(false);
+    acq.step(1, TRIGGER_EVENT_NONE);
+    acq.step(2, TRIGGER_EVENT_NONE);
+
+    TEST_ASSERT_EQUAL_UINT32(0, acq.framesStored());
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
@@ -456,6 +523,9 @@ static int run_all(void)
     RUN_TEST(test_a_new_rate_reaches_the_sensor_on_the_next_acquisition);
     RUN_TEST(test_the_same_rate_arriving_again_costs_nothing);
     RUN_TEST(test_changing_another_field_does_not_re_rate_the_sensor);
+    RUN_TEST(test_the_frame_count_survives_the_ring_wrapping);
+    RUN_TEST(test_each_acquisition_counts_its_own_frames);
+    RUN_TEST(test_a_sample_the_sensor_did_not_have_is_not_counted);
     return UNITY_END();
 }
 

@@ -197,6 +197,12 @@ private:
     uint32_t _ushortWrites;
 };
 
+static MemoryStore &store_for_rate()
+{
+    static MemoryStore store;
+    return store;
+}
+
 // Advances by a fixed step on every read, so a test can drive the acquisition loop
 // forward without knowing how many times it polls.
 class SteppingClock : public IClock
@@ -214,10 +220,42 @@ public:
         return _now;
     }
 
+    uint32_t last() const { return _now; }
+
 private:
     uint32_t _now;
     uint32_t _step;
     bool _first;
+};
+
+// Keeps every byte written, so a test can read the trailer the device sent.
+class CapturingTransport : public ITransport
+{
+public:
+    bool open(const char *, uint16_t) override { return true; }
+    uint32_t write(const uint8_t *data, uint32_t len) override
+    {
+        for (uint32_t i = 0; i < len && _len < sizeof(_buf); i++)
+            _buf[_len++] = data[i];
+        return len;
+    }
+    uint32_t readExact(uint8_t *out, uint32_t len, uint32_t) override
+    {
+        const uint8_t reply[SERVER_CONFIG_WIRE_BYTES] = {
+            0xF0, 0x00, 0x14, 0x00, 0x05, 0x00, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00};
+        uint32_t n = (len < SERVER_CONFIG_WIRE_BYTES) ? len : SERVER_CONFIG_WIRE_BYTES;
+        for (uint32_t i = 0; i < n; i++)
+            out[i] = reply[i];
+        return n;
+    }
+    void close() override {}
+
+    const uint8_t *bytes() const { return _buf; }
+    uint32_t len() const { return _len; }
+
+private:
+    uint8_t _buf[4096];
+    uint32_t _len = 0;
 };
 
 // Reads HIGH until told to fall, which is what ends an acquisition.
@@ -295,7 +333,8 @@ static void test_the_radio_is_turned_off_after_a_successful_iteration(void)
 
     TEST_ASSERT_FALSE(outcome.idleTimedOut);
     TEST_ASSERT_TRUE(log.contains("tcp.write"));
-    // Header + every frame the ring held + battery. Derived from kHighReads,
+    // Header + every frame the ring held + the 7-byte trailer. Derived from
+    // kHighReads,
     // not from a number read off a previous run.
     //
     // This assertion is stronger than the bool it replaced on DETECTION and weaker
@@ -305,7 +344,7 @@ static void test_the_radio_is_turned_off_after_a_successful_iteration(void)
     // fails FALSE POSITIVE, loudly, on the next run. Do not swap it back for a bool
     // the next time it breaks.
     TEST_ASSERT_EQUAL_UINT32(HEADER_SIZE_BYTES + kHighReads * SAMPLE_SIZE_BYTES +
-                                 BATTERY_SIZE_BYTES,
+                                 TRAILER_SIZE_BYTES,
                              transport.bytesWritten());
     TEST_ASSERT_TRUE(log.contains("radio.off"));
 }
@@ -463,6 +502,83 @@ static void test_a_reserved_nibble_from_the_server_is_refused(void)
     TEST_ASSERT_EQUAL_UINT16(SAMPLING_CODE_50HZ, config.sampling_code);
 }
 
+// ---------------------------------------------------------------------------
+// The rate the trailer carries
+// ---------------------------------------------------------------------------
+
+static void test_the_reported_rate_counts_frames_taken_not_frames_surviving(void)
+{
+    // The ring here holds 8 frames and the acquisition takes more than that, so
+    // the two possible formulas disagree: frames TAKEN, which is the truth, and
+    // the ring's occupancy, which saturates. Reading occupancy would report a
+    // 200 Hz capture that outran the buffer as 100 Hz.
+    CallLog log;
+    SilentImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    acq.setConfig(default_server_config());
+    acq.markSamplingApplied(default_server_config().sampling_code);
+    BeltTrigger trigger;
+    trigger.begin(0, 0);
+    LoggingRadio radio(log, true);
+    QuietCpu cpu;
+    QuietSleeper sleeper;
+    PowerManager power(imu, radio, cpu, sleeper);
+    CapturingTransport transport;
+    SteppingClock clock(1);
+    const uint32_t reads = kFrames * 2 + 1;      // outruns the ring
+    ScriptedPin pin(reads);
+    FixedBattery battery;
+
+    CycleRunner runner(acq, trigger, ring, power, radio, transport, store_for_rate(),
+                       pin, battery, clock);
+    ServerConfig config = default_server_config();
+    runner.runIteration(network(), config);
+
+    const uint32_t framesTaken = acq.framesStored();
+    TEST_ASSERT_EQUAL_UINT32(reads, framesTaken);
+    TEST_ASSERT_TRUE(framesTaken > ring.bytesStored() / SAMPLE_SIZE_BYTES);
+
+    // The trailer is the last TRAILER_SIZE_BYTES written.
+    const uint8_t *trailer = transport.bytes() + transport.len() - TRAILER_SIZE_BYTES;
+    const uint16_t reported = (uint16_t)(trailer[5] | (trailer[6] << 8));
+
+    TEST_ASSERT_EQUAL_UINT16(effective_hz(framesTaken, clock.last()), reported);
+    TEST_ASSERT_NOT_EQUAL(effective_hz(ring.bytesStored() / SAMPLE_SIZE_BYTES, clock.last()),
+                          reported);
+}
+
+static void test_the_trailer_carries_the_battery_this_build_measured(void)
+{
+    CallLog log;
+    SilentImu imu;
+    RingBuffer ring(storage, kFrames, SAMPLE_SIZE_BYTES);
+    AcquisitionService acq(imu, ring);
+    acq.setConfig(default_server_config());
+    acq.markSamplingApplied(default_server_config().sampling_code);
+    BeltTrigger trigger;
+    trigger.begin(0, 0);
+    LoggingRadio radio(log, true);
+    QuietCpu cpu;
+    QuietSleeper sleeper;
+    PowerManager power(imu, radio, cpu, sleeper);
+    CapturingTransport transport;
+    SteppingClock clock(1);
+    ScriptedPin pin(kHighReads);
+    FixedBattery battery;
+
+    CycleRunner runner(acq, trigger, ring, power, radio, transport, store_for_rate(),
+                       pin, battery, clock);
+    ServerConfig config = default_server_config();
+    runner.runIteration(network(), config);
+
+    const uint8_t *trailer = transport.bytes() + transport.len() - TRAILER_SIZE_BYTES;
+
+    TEST_ASSERT_EQUAL_UINT8(SIF_FW_VERSION_MAJOR, trailer[2]);
+    TEST_ASSERT_EQUAL_UINT8(SIF_FW_VERSION_MINOR, trailer[3]);
+    TEST_ASSERT_EQUAL_UINT8(SIF_FW_VERSION_PATCH, trailer[4]);
+}
+
 static int run_all(void)
 {
     UNITY_BEGIN();
@@ -473,6 +589,8 @@ static int run_all(void)
     RUN_TEST(test_the_rate_already_stored_is_not_written_again);
     RUN_TEST(test_a_server_with_no_opinion_leaves_the_stored_rate_alone);
     RUN_TEST(test_a_reserved_nibble_from_the_server_is_refused);
+    RUN_TEST(test_the_reported_rate_counts_frames_taken_not_frames_surviving);
+    RUN_TEST(test_the_trailer_carries_the_battery_this_build_measured);
     return UNITY_END();
 }
 

@@ -162,6 +162,8 @@
             <th>Horario</th>
             <th>Amostras</th>
             <th>Bateria (mV)</th>
+            <th>Firmware</th>
+            <th>Hz medidos</th>
             <th>OTA</th>
           </tr>
         </thead>
@@ -173,6 +175,8 @@
               <td>{{ entry.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
               <td>{% if entry.complete %}{{ entry.n_samples }}{% else %}<span class="incomplete-badge">INCOMPLETA</span>{% endif %}</td>
               <td>{% if entry.complete %}{{ entry.battery_mv }}{% else %}&mdash;{% endif %}</td>
+              <td>{{ entry.firmware if entry.firmware else '&mdash;' | safe }}</td>
+              <td>{{ entry.effective_hz if entry.effective_hz is not none else '&mdash;' | safe }}</td>
               <td>{% if entry.ota_sent %}<span class="ota-badge">OTA</span>{% endif %}</td>
             </tr>
             {% endfor %}

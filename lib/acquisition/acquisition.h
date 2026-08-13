@@ -36,6 +36,11 @@ public:
     // service is built with the defaults, before NVS is read.
     void markSamplingApplied(uint16_t code);
 
+    // Frames stored during THIS acquisition — what the measured rate divides.
+    // Not the ring's occupancy: a capture that outruns the buffer would then
+    // report a rate as low as the buffer is small.
+    uint32_t framesStored() const;
+
     // Starts one acquisition and counts it. Wakes the IMU only when the rate has
     // changed since the last one — see the body. Does not clear the ring.
     void beginAcquisition(uint32_t nowMs);
@@ -56,6 +61,7 @@ public:
 
 private:
     uint16_t _appliedSamplingCode = 0;  // what the IMU is actually running; 0 = unknown
+    uint32_t _framesStored = 0;         // frames appended in this acquisition
     IImu &_imu;
     RingBuffer &_ring;
     ServerConfig _config;
