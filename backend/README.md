@@ -16,10 +16,13 @@ Servidor Python que recebe dados do ESP32 via TCP, salva em CSV e expõe uma int
 ```bash
 cd backend
 
-# Criar e ativar ambiente virtual
-python3 -m venv .venv
-source .venv/bin/activate   # Linux / WSL
-# ou: .venv\Scripts\activate  (PowerShell nativo — não recomendado, usar WSL)
+# Criar e ativar ambiente virtual.
+# O nome `venv` é o mesmo usado pelo README da raiz e pelo CONTRIBUTING: os
+# comandos que chamam o interpretador por caminho (backend/venv/bin/python)
+# quebram se este diretório tiver outro nome.
+python3 -m venv venv
+source venv/bin/activate   # Linux / WSL
+# ou: venv\Scripts\activate  (PowerShell nativo — não recomendado, usar WSL)
 
 # Instalar dependências
 pip install -r requirements.txt
@@ -31,7 +34,7 @@ pip install -r requirements.txt
 
 ```bash
 cd backend
-source .venv/bin/activate
+source venv/bin/activate
 python -m server.tcp_server
 ```
 
@@ -196,8 +199,8 @@ SERVER_IP=192.168.1.50 SERVER_PORT=9000 python -m server.tcp_server
 
 ```bash
 cd backend
-source .venv/bin/activate
-python -m pytest tests/ -v
+source venv/bin/activate
+python -m pytest -q
 ```
 
 259 testes cobrindo: empacotamento do protocolo, leitura exata do socket, AppState e armamento de OTA, servidor TCP, escrita do CSV e rotas Flask.

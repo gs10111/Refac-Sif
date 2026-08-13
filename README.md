@@ -48,8 +48,14 @@ Só o Python é obrigatório para começar. PlatformIO só entra quando você fo
 **Instalar o PlatformIO**, se for o caso:
 
 ```bash
+pipx install platformio          # recomendado
+# ou, se não tiver pipx:
 python3 -m pip install --user platformio
 ```
+
+> **Ubuntu 23.10+, Debian 12+ e derivados** recusam o `pip install --user` com
+> `error: externally-managed-environment`. Nesses sistemas use o `pipx`
+> (`sudo apt install pipx`), que é o caminho suportado.
 
 Se o comando `pio` não aparecer depois disso, ele está em `~/.platformio/penv/bin/pio` — use o caminho completo ou acrescente ao `PATH`.
 
@@ -80,9 +86,16 @@ python -m server.tcp_server
 2026-08-13 10:00:00,000 - INFO - Configuration stored in sif.db
 2026-08-13 10:00:00,001 - INFO - Server listening on 0.0.0.0:12345
 Type 'q' to stop.
+ * Serving Flask app 'web.server'
+ * Debug mode: off
+WARNING: This is a development server. Do not use it in a production deployment.
+ * Running on all addresses (0.0.0.0)
  * Running on http://127.0.0.1:8080
- * Running on http://192.168.1.100:8080
+ * Running on http://SEU.IP.NA.REDE:8080          ← o IP desta máquina
+Press CTRL+C to quit
 ```
+
+O aviso do Flask sobre servidor de desenvolvimento é esperado — é a UI de configuração da planta, não um serviço exposto à internet.
 
 Duas portas sobem juntas:
 
@@ -91,7 +104,7 @@ Duas portas sobem juntas:
 | `12345` | TCP, onde o ESP32 conecta |
 | `8080` | HTTP, a página de configuração |
 
-Para parar: digite `q` e Enter.
+Para parar: digite `q` e Enter — ou `CTRL+C`. As duas funcionam; o `q` é o desligamento limpo, que espera o CSV em andamento terminar de gravar.
 
 > **A porta 8080 é a que mais dá conflito** (Tomcat, ThingsBoard, outro Flask). Se aparecer `Address already in use`, suba assim:
 > ```bash
@@ -276,6 +289,7 @@ Instalação do broker e do gateway: [`gateway/README.md`](gateway/README.md).
 | Troquei a taxa e nada mudou | vale da **próxima aquisição** | passe o ímã de novo e olhe *Hz medidos* |
 | Sensor transmite e não gera CSV | aquisição encerrada por `idle_min` | é o projeto: sem ímã, a captura é descartada |
 | `#error "Missing include/secrets.h"` | credenciais ausentes | passo [5.1](#51-credenciais-de-wifi) |
+| `Exception in thread ... exit_monitor` no boot | servidor subiu sem terminal (systemd, `nohup`, container) | o servidor continua funcionando: é só a thread que espera o `q` morrendo por não ter teclado. Pare com `CTRL+C` ou `systemctl stop` |
 | `ps_malloc` falhou, device parado | PSRAM indisponível | conferir se a placa é mesmo `pico32` com PSRAM |
 
 O bloco **Ocorrências** da página mostra as falhas do servidor sem você abrir terminal nenhum.
